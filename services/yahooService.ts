@@ -11,7 +11,7 @@ import { League, PlayerStats, ManagerHistory } from '../types';
  *    For this implementation, we provide the direct frontend structure.
  */
 
-const CLIENT_ID = 'YOUR_YAHOO_CLIENT_ID'; // User must replace with their own Client ID
+const CLIENT_ID = 'dj0yJmk9M2t6VlVNSERHa2dRJmQ9WVdrOVNEUTNjWEZKTXpRbWNHbzlNQS0tJnM9Y29uc3VtZXJzZWNyZXQmeD1lNA'; // User must replace with their own Client ID
 const REDIRECT_URI = window.location.origin;
 const AUTH_ENDPOINT = 'https://api.login.yahoo.com/oauth2/request_auth';
 const TOKEN_ENDPOINT = 'https://api.login.yahoo.com/oauth2/get_token';
