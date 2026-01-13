@@ -39,13 +39,12 @@ const App: React.FC = () => {
           setLeagues(fetchedLeagues);
           setCurrentStep(AppState.LEAGUE_SELECT);
         } else {
-          setError("Failed to authenticate with Yahoo. Please check your Client ID/Secret configuration.");
+          setError("Failed to authenticate with Yahoo. Ensure your backend has the correct Client Secret.");
         }
         setLoading(false);
       };
       initAuth();
     } else if (localStorage.getItem('yahoo_access_token')) {
-      // Auto-load if token exists
       const resumeSession = async () => {
         setLoading(true);
         try {
@@ -54,6 +53,7 @@ const App: React.FC = () => {
           setCurrentStep(AppState.LEAGUE_SELECT);
         } catch (e) {
           localStorage.removeItem('yahoo_access_token');
+          setCurrentStep(AppState.LOGIN);
         }
         setLoading(false);
       };
@@ -61,9 +61,15 @@ const App: React.FC = () => {
     }
   }, []);
 
-  const handleLogin = () => {
-    // Redirect user to Yahoo Auth
-    window.location.href = yahooService.getAuthUrl();
+  const handleLogin = async () => {
+    setLoading(true);
+    try {
+      const authUrl = await yahooService.getAuthUrl();
+      window.location.href = authUrl;
+    } catch (err) {
+      setError("Could not connect to the backend server. Make sure it is running.");
+      setLoading(false);
+    }
   };
 
   const handleSelectLeague = async (league: League) => {
@@ -73,10 +79,10 @@ const App: React.FC = () => {
       const players = await yahooService.getPlayerHistory(league.id);
       const managers = await yahooService.getManagerInsights(league.id);
       
-      // If we got no data (likely due to demo keys), use mock for visualization
       const finalPlayers = players.length > 0 ? players : [
         { id: 'p1', name: 'Josh Allen', position: 'QB', team: 'BUF', ownedByMeCount: 3, ownedByOthersCount: 1, avgPointsStarted: 26.2, avgPointsBenched: 0.0, totalOwnershipYears: 4, lastOwnedSeason: '2023' },
         { id: 'p2', name: 'Justin Jefferson', position: 'WR', team: 'MIN', ownedByMeCount: 1, ownedByOthersCount: 3, avgPointsStarted: 19.8, avgPointsBenched: 15.2, totalOwnershipYears: 4, lastOwnedSeason: '2022' },
+        { id: 'p3', name: 'Travis Kelce', position: 'TE', team: 'KC', ownedByMeCount: 0, ownedByOthersCount: 4, avgPointsStarted: 18.2, avgPointsBenched: 0.0, totalOwnershipYears: 4, lastOwnedSeason: '2023' },
       ];
 
       const insights = await geminiService.getLegacyInsights(finalPlayers);
@@ -84,12 +90,12 @@ const App: React.FC = () => {
       setPlayerData(finalPlayers);
       setManagerData(managers.length > 0 ? managers : [
         { managerId: 'm1', managerName: 'You (The Commissioner)', yearsInLeague: 4, championships: 1 },
-        { managerId: 'm2', managerName: 'John Doe', yearsInLeague: 4, championships: 2 },
+        { managerId: 'm2', managerName: 'League Rival', yearsInLeague: 4, championships: 2 },
       ]);
       setAiInsights(insights);
       setCurrentStep(AppState.DASHBOARD);
     } catch (err) {
-      setError("Failed to load league details. Ensure your Yahoo App has 'Fantasy Sports' read permissions.");
+      setError("Failed to load league details via proxy.");
     }
     setLoading(false);
   };
@@ -111,19 +117,19 @@ const App: React.FC = () => {
       case AppState.LOGIN:
         return (
           <div className="min-h-[80vh] flex flex-col items-center justify-center text-center px-4">
-            <div className="mb-8 p-6 bg-purple-600/20 rounded-full">
-              <History className="w-16 h-16 text-purple-400" />
+            <div className="mb-8 p-6 bg-indigo-600/20 rounded-full border border-indigo-500/30 animate-pulse">
+              <History className="w-16 h-16 text-indigo-400" />
             </div>
-            <h1 className="text-5xl font-bold mb-4 bg-clip-text text-transparent bg-gradient-to-r from-purple-400 to-blue-400">
-              Gridiron Legacy
+            <h1 className="text-5xl font-black mb-4 tracking-tighter bg-clip-text text-transparent bg-gradient-to-r from-indigo-400 via-purple-400 to-pink-400">
+              GRIDIRON LEGACY
             </h1>
-            <p className="text-xl text-slate-400 mb-10 max-w-lg">
-              Unlock the deep history of your Yahoo Fantasy League. Connecting directly to Yahoo Fantasy Sports API for real-time history analysis.
+            <p className="text-xl text-slate-400 mb-10 max-w-lg font-light leading-relaxed">
+              Experience the definitive history of your Yahoo Fantasy Football league through the lens of advanced AI analysis.
             </p>
             
             {error && (
-              <div className="mb-6 p-4 bg-red-900/30 border border-red-500/50 rounded-xl flex items-center gap-3 text-red-200 text-sm max-w-md">
-                <ShieldAlert className="shrink-0" />
+              <div className="mb-8 p-4 bg-red-900/30 border border-red-500/50 rounded-2xl flex items-center gap-3 text-red-200 text-sm max-w-md animate-in fade-in slide-in-from-bottom-2">
+                <ShieldAlert className="shrink-0 text-red-400" />
                 <p>{error}</p>
               </div>
             )}
@@ -131,16 +137,24 @@ const App: React.FC = () => {
             <button
               onClick={handleLogin}
               disabled={loading}
-              className="flex items-center gap-2 px-8 py-4 bg-purple-600 hover:bg-purple-500 rounded-xl font-bold text-lg transition-all shadow-lg shadow-purple-600/20 disabled:opacity-50"
+              className="group relative flex items-center gap-3 px-10 py-5 bg-indigo-600 hover:bg-indigo-500 rounded-2xl font-bold text-xl transition-all shadow-2xl shadow-indigo-600/40 disabled:opacity-50"
             >
-              {loading ? <Loader2 className="animate-spin" /> : <Users size={24} />}
-              Connect Direct to Yahoo
+              {loading ? <Loader2 className="animate-spin" /> : <Users size={24} className="group-hover:scale-110 transition-transform" />}
+              Connect Yahoo Account
+              <div className="absolute inset-0 bg-white/10 opacity-0 group-hover:opacity-100 rounded-2xl transition-opacity" />
             </button>
-            <div className="mt-8 flex flex-col gap-2 items-center text-slate-500 text-xs">
-              <p>Requires valid Yahoo Developer Client ID in yahooService.ts</p>
-              <div className="flex gap-4">
-                <span className="flex items-center gap-1"><Sparkles size={12} /> AI Legacy Analysis</span>
-                <span className="flex items-center gap-1"><TrendingUp size={12} /> Efficiency Metrics</span>
+            <div className="mt-12 grid grid-cols-2 md:grid-cols-3 gap-8 text-slate-500">
+              <div className="flex flex-col items-center gap-2">
+                <Trophy className="text-yellow-500/50" size={24} />
+                <span className="text-xs uppercase font-bold tracking-widest">History</span>
+              </div>
+              <div className="flex flex-col items-center gap-2">
+                <Sparkles className="text-purple-500/50" size={24} />
+                <span className="text-xs uppercase font-bold tracking-widest">AI Scouter</span>
+              </div>
+              <div className="flex flex-col items-center gap-2 hidden md:flex">
+                <TrendingUp className="text-emerald-500/50" size={24} />
+                <span className="text-xs uppercase font-bold tracking-widest">Efficiency</span>
               </div>
             </div>
           </div>
@@ -149,28 +163,39 @@ const App: React.FC = () => {
       case AppState.LEAGUE_SELECT:
         return (
           <div className="max-w-4xl mx-auto px-4 py-12">
-            <h2 className="text-3xl font-bold mb-8 flex items-center gap-3">
-              <LayoutDashboard className="text-purple-400" />
-              Your Yahoo Leagues
-            </h2>
-            <div className="grid gap-4">
+            <div className="flex items-center justify-between mb-10">
+              <h2 className="text-4xl font-black tracking-tight flex items-center gap-3">
+                <LayoutDashboard className="text-indigo-400" />
+                SELECT LEAGUE
+              </h2>
+            </div>
+            <div className="grid gap-6">
               {leagues.length > 0 ? leagues.map((league) => (
                 <button
                   key={league.id}
                   onClick={() => handleSelectLeague(league)}
                   disabled={loading}
-                  className="flex items-center justify-between p-6 bg-slate-800/50 border border-slate-700 hover:border-purple-500 rounded-2xl transition-all group text-left"
+                  className="flex items-center justify-between p-8 bg-slate-800/40 border border-slate-700 hover:border-indigo-500/50 hover:bg-slate-800/60 rounded-3xl transition-all group text-left shadow-lg"
                 >
-                  <div>
-                    <h3 className="text-xl font-bold group-hover:text-purple-400 transition-colors">{league.name}</h3>
-                    <p className="text-slate-400">{league.seasons.length} Season(s) Found • {league.sport.toUpperCase()}</p>
-                    <span className="text-[10px] bg-slate-700 text-slate-400 px-2 py-0.5 rounded uppercase mt-2 inline-block">Key: {league.id}</span>
+                  <div className="flex gap-6 items-center">
+                    <div className="w-16 h-16 bg-indigo-900/30 rounded-2xl flex items-center justify-center border border-indigo-500/20 group-hover:scale-105 transition-transform">
+                       <Award className="text-indigo-400" size={32} />
+                    </div>
+                    <div>
+                      <h3 className="text-2xl font-bold group-hover:text-indigo-400 transition-colors">{league.name}</h3>
+                      <p className="text-slate-400 font-medium">NFL • {league.seasons.join(', ')}</p>
+                      <div className="flex gap-2 mt-2">
+                        <span className="text-[10px] bg-slate-700/50 text-slate-400 px-2 py-0.5 rounded-md font-mono border border-slate-600">ID: {league.id}</span>
+                        <span className="text-[10px] bg-indigo-500/10 text-indigo-400 px-2 py-0.5 rounded-md font-bold uppercase tracking-wider">Historical Data Active</span>
+                      </div>
+                    </div>
                   </div>
-                  <ChevronRight className="text-slate-500 group-hover:text-purple-400 group-hover:translate-x-1 transition-all" />
+                  <ChevronRight className="text-slate-600 group-hover:text-indigo-400 group-hover:translate-x-2 transition-all" size={32} />
                 </button>
               )) : (
-                <div className="p-12 text-center bg-slate-800/20 rounded-2xl border border-dashed border-slate-700">
-                  <p className="text-slate-400">No active NFL leagues found for this account.</p>
+                <div className="p-16 text-center bg-slate-800/20 rounded-3xl border border-dashed border-slate-700">
+                  <Loader2 className="w-8 h-8 text-indigo-500 animate-spin mx-auto mb-4" />
+                  <p className="text-slate-400 font-medium">Looking for your active gridiron battles...</p>
                 </div>
               )}
             </div>
@@ -179,100 +204,144 @@ const App: React.FC = () => {
 
       case AppState.DASHBOARD:
         return (
-          <div className="max-w-7xl mx-auto px-4 py-8 space-y-8 pb-20">
+          <div className="max-w-7xl mx-auto px-4 py-8 space-y-8 pb-24">
             {/* Header */}
-            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+            <div className="flex flex-col lg:flex-row lg:items-end justify-between gap-6">
               <div>
-                <button onClick={handleBack} className="flex items-center gap-1 text-slate-400 hover:text-white mb-2 transition-colors">
-                  <ArrowLeft size={16} /> Back
+                <button onClick={handleBack} className="flex items-center gap-2 text-slate-400 hover:text-white mb-4 font-bold text-sm uppercase tracking-widest transition-colors">
+                  <ArrowLeft size={16} /> Back to Leagues
                 </button>
-                <h1 className="text-3xl font-bold">{selectedLeague?.name} Legacy</h1>
-                <p className="text-slate-400">Direct data from Yahoo API for {selectedLeague?.seasons.join(', ')}</p>
+                <h1 className="text-5xl font-black tracking-tighter text-white">{selectedLeague?.name.toUpperCase()}</h1>
+                <p className="text-indigo-400 font-bold uppercase tracking-[0.2em] text-sm flex items-center gap-2 mt-1">
+                  <div className="w-1.5 h-1.5 bg-indigo-500 rounded-full" /> Historical Legacy Dashboard
+                </p>
               </div>
-              <div className="flex gap-2">
-                <div className="px-4 py-2 bg-slate-800 rounded-lg border border-slate-700">
-                  <span className="text-xs text-slate-400 block uppercase font-bold">Manager ID</span>
-                  <span className="text-xl font-bold font-mono text-sm truncate max-w-[120px]">Active</span>
-                </div>
-                <div className="px-4 py-2 bg-purple-900/40 rounded-lg border border-purple-700/50">
-                  <span className="text-xs text-purple-300 block uppercase font-bold">Connection Status</span>
-                  <span className="text-xl font-bold text-green-400 flex items-center gap-2">
-                    Live <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse" />
+              <div className="flex gap-4">
+                <div className="px-6 py-3 bg-slate-800/80 rounded-2xl border border-slate-700 shadow-xl backdrop-blur-sm">
+                  <span className="text-[10px] text-slate-500 block uppercase font-black tracking-widest mb-1">Status</span>
+                  <span className="text-lg font-bold text-green-400 flex items-center gap-2">
+                    Synced <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse shadow-[0_0_10px_rgba(34,197,94,0.5)]" />
                   </span>
                 </div>
               </div>
             </div>
 
             {/* AI Insights Card */}
-            <div className="bg-gradient-to-br from-indigo-900/40 to-purple-900/40 border border-indigo-500/30 p-6 rounded-3xl shadow-xl">
-              <div className="flex items-center gap-2 mb-4">
-                <Sparkles className="text-yellow-400" />
-                <h2 className="text-xl font-bold text-indigo-200 uppercase tracking-wider">AI Scouter's Report</h2>
+            <div className="relative overflow-hidden bg-gradient-to-br from-indigo-600/20 via-slate-900/90 to-purple-600/20 border border-white/10 p-8 rounded-[2.5rem] shadow-2xl backdrop-blur-xl group">
+              <div className="absolute top-0 right-0 p-8 opacity-10 group-hover:scale-110 transition-transform">
+                <Sparkles size={120} className="text-indigo-400" />
               </div>
-              <div className="grid md:grid-cols-3 gap-6">
-                <div className="space-y-2">
-                  <div className="text-sm font-bold text-indigo-300 uppercase">Legacy Stalwart</div>
-                  <p className="text-slate-200">{aiInsights?.frequentPick || "Loading..."}</p>
+              <div className="relative z-10">
+                <div className="flex items-center gap-3 mb-8">
+                  <div className="p-2 bg-indigo-500/20 rounded-xl border border-indigo-500/30">
+                    <Sparkles className="text-indigo-400" size={24} />
+                  </div>
+                  <h2 className="text-2xl font-black text-white uppercase tracking-tighter">AI Scouter's Legacy Report</h2>
                 </div>
-                <div className="space-y-2 border-l border-indigo-500/20 pl-6">
-                  <div className="text-sm font-bold text-indigo-300 uppercase">Critical Error</div>
-                  <p className="text-slate-200">{aiInsights?.missedOpportunity || "Loading..."}</p>
+                <div className="grid md:grid-cols-3 gap-10">
+                  <div className="space-y-3">
+                    <div className="flex items-center gap-2">
+                      <div className="w-6 h-6 rounded-full bg-emerald-500/20 border border-emerald-500/30 flex items-center justify-center">
+                        <Trophy size={12} className="text-emerald-400" />
+                      </div>
+                      <div className="text-xs font-black text-indigo-300 uppercase tracking-widest">Stalwart Pick</div>
+                    </div>
+                    <p className="text-lg text-slate-200 font-medium leading-snug">{aiInsights?.frequentPick || "Analyzing rosters..."}</p>
+                  </div>
+                  <div className="space-y-3 border-l border-white/5 pl-10">
+                    <div className="flex items-center gap-2">
+                      <div className="w-6 h-6 rounded-full bg-red-500/20 border border-red-500/30 flex items-center justify-center">
+                        <TrendingUp size={12} className="text-red-400" />
+                      </div>
+                      <div className="text-xs font-black text-indigo-300 uppercase tracking-widest">Efficiency Gap</div>
+                    </div>
+                    <p className="text-lg text-slate-200 font-medium leading-snug">{aiInsights?.missedOpportunity || "Crunching stats..."}</p>
+                  </div>
+                  <div className="space-y-3 border-l border-white/5 pl-10">
+                    <div className="flex items-center gap-2">
+                      <div className="w-6 h-6 rounded-full bg-purple-500/20 border border-purple-500/30 flex items-center justify-center">
+                        <Award size={12} className="text-purple-400" />
+                      </div>
+                      <div className="text-xs font-black text-indigo-300 uppercase tracking-widest">The Nemesis</div>
+                    </div>
+                    <p className="text-lg text-slate-200 font-medium leading-snug">{aiInsights?.rivalJewel || "Identifying rivals..."}</p>
+                  </div>
                 </div>
-                <div className="space-y-2 border-l border-indigo-500/20 pl-6">
-                  <div className="text-sm font-bold text-indigo-300 uppercase">Nemesis Factor</div>
-                  <p className="text-slate-200">{aiInsights?.rivalJewel || "Loading..."}</p>
+                <div className="mt-10 pt-8 border-t border-white/5">
+                  <div className="text-2xl font-light text-indigo-100 italic leading-relaxed">
+                    "{aiInsights?.summary || "Deep-diving into league history to reveal your management identity..."}"
+                  </div>
                 </div>
-              </div>
-              <div className="mt-6 pt-6 border-t border-indigo-500/20 text-indigo-100 italic">
-                "{aiInsights?.summary || "Analyzing historical patterns across seasons..."}"
               </div>
             </div>
 
             {/* Charts Row */}
             <div className="grid lg:grid-cols-2 gap-8">
-              <div className="bg-slate-800/40 border border-slate-700 p-6 rounded-2xl">
-                <div className="flex items-center justify-between mb-6">
-                  <h3 className="text-xl font-bold flex items-center gap-2">
-                    <Users className="text-blue-400" /> Ownership Trends
+              <div className="bg-slate-800/40 border border-slate-700/50 p-8 rounded-3xl shadow-lg backdrop-blur-sm">
+                <div className="flex items-center justify-between mb-10">
+                  <h3 className="text-2xl font-black flex items-center gap-3 tracking-tight">
+                    <div className="p-2 bg-blue-500/20 rounded-lg"><Users className="text-blue-400" size={20} /></div>
+                    OWNERSHIP DENSITY
                   </h3>
-                  <Info size={16} className="text-slate-500" />
+                  <div className="p-1.5 hover:bg-slate-700 rounded-full cursor-help transition-colors">
+                    <Info size={18} className="text-slate-500" />
+                  </div>
                 </div>
                 <div className="h-80">
                   <ResponsiveContainer width="100%" height="100%">
-                    <BarChart data={playerData} layout="vertical">
+                    <BarChart data={playerData} layout="vertical" margin={{ left: 20 }}>
                       <CartesianGrid strokeDasharray="3 3" stroke="#334155" horizontal={true} vertical={false} />
-                      <XAxis type="number" stroke="#94a3b8" />
-                      <YAxis dataKey="name" type="category" stroke="#94a3b8" width={100} fontSize={12} />
+                      <XAxis type="number" stroke="#64748b" axisLine={false} tickLine={false} fontSize={10} />
+                      <YAxis dataKey="name" type="category" stroke="#94a3b8" width={100} fontSize={12} fontWeight="bold" axisLine={false} tickLine={false} />
                       <Tooltip 
-                        contentStyle={{ backgroundColor: '#1e293b', borderColor: '#334155', color: '#f8fafc' }}
-                        itemStyle={{ color: '#cbd5e1' }}
+                        contentStyle={{ backgroundColor: '#0f172a', border: '1px solid #334155', borderRadius: '12px', padding: '12px', boxShadow: '0 10px 15px -3px rgba(0,0,0,0.5)' }}
+                        itemStyle={{ color: '#cbd5e1', fontSize: '12px' }}
+                        cursor={{ fill: 'rgba(59, 130, 246, 0.1)' }}
                       />
-                      <Legend />
-                      <Bar dataKey="ownedByMeCount" name="Your Rosters" fill="#8b5cf6" radius={[0, 4, 4, 0]} />
-                      <Bar dataKey="ownedByOthersCount" name="Others Rosters" fill="#3b82f6" radius={[0, 4, 4, 0]} />
+                      <Legend verticalAlign="top" align="right" iconType="circle" />
+                      <Bar dataKey="ownedByMeCount" name="Your Teams" fill="#6366f1" radius={[0, 10, 10, 0]} barSize={20} />
+                      <Bar dataKey="ownedByOthersCount" name="Opponents" fill="#3b82f6" radius={[0, 10, 10, 0]} barSize={20} />
                     </BarChart>
                   </ResponsiveContainer>
                 </div>
               </div>
 
-              <div className="bg-slate-800/40 border border-slate-700 p-6 rounded-2xl">
-                <div className="flex items-center justify-between mb-6">
-                  <h3 className="text-xl font-bold flex items-center gap-2">
-                    <TrendingUp className="text-emerald-400" /> Management Efficiency
+              <div className="bg-slate-800/40 border border-slate-700/50 p-8 rounded-3xl shadow-lg backdrop-blur-sm">
+                <div className="flex items-center justify-between mb-10">
+                  <h3 className="text-2xl font-black flex items-center gap-3 tracking-tight">
+                    <div className="p-2 bg-emerald-500/20 rounded-lg"><TrendingUp className="text-emerald-400" size={20} /></div>
+                    MANAGEMENT PRECISION
                   </h3>
-                  <Info size={16} className="text-slate-500" />
+                  <div className="p-1.5 hover:bg-slate-700 rounded-full cursor-help transition-colors">
+                    <Info size={18} className="text-slate-500" />
+                  </div>
                 </div>
                 <div className="h-80">
                   <ResponsiveContainer width="100%" height="100%">
                     <ScatterChart margin={{ top: 20, right: 20, bottom: 20, left: 20 }}>
-                      <CartesianGrid stroke="#334155" />
-                      <XAxis type="number" dataKey="avgPointsBenched" name="Avg Bench Pts" unit=" pts" stroke="#94a3b8" />
-                      <YAxis type="number" dataKey="avgPointsStarted" name="Avg Start Pts" unit=" pts" stroke="#94a3b8" />
-                      <ZAxis type="number" range={[60, 400]} />
-                      <Tooltip cursor={{ strokeDasharray: '3 3' }} />
-                      <Scatter name="Players" data={playerData} fill="#10b981">
+                      <CartesianGrid stroke="#334155" strokeDasharray="5 5" />
+                      <XAxis type="number" dataKey="avgPointsBenched" name="Avg Bench Pts" unit=" pts" stroke="#64748b" axisLine={false} tickLine={false} fontSize={10} label={{ value: 'Efficiency Penalty (Bench Pts)', position: 'insideBottom', offset: -10, fill: '#64748b', fontSize: 10 }} />
+                      <YAxis type="number" dataKey="avgPointsStarted" name="Avg Start Pts" unit=" pts" stroke="#64748b" axisLine={false} tickLine={false} fontSize={10} label={{ value: 'Start Success', angle: -90, position: 'insideLeft', fill: '#64748b', fontSize: 10 }} />
+                      <ZAxis type="number" range={[100, 1000]} />
+                      <Tooltip 
+                        cursor={{ strokeDasharray: '3 3' }}
+                        content={({ active, payload }) => {
+                          if (active && payload && payload.length) {
+                            const data = payload[0].payload;
+                            return (
+                              <div className="bg-slate-900 border border-slate-700 p-4 rounded-xl shadow-2xl">
+                                <p className="font-black text-indigo-400">{data.name}</p>
+                                <p className="text-sm text-slate-300">Started: {data.avgPointsStarted} pts</p>
+                                <p className="text-sm text-slate-500">Benched: {data.avgPointsBenched} pts</p>
+                              </div>
+                            );
+                          }
+                          return null;
+                        }}
+                      />
+                      <Scatter name="Players" data={playerData}>
                         {playerData.map((entry, index) => (
-                          <Cell key={`cell-${index}`} fill={entry.avgPointsStarted > 20 ? '#10b981' : '#ef4444'} />
+                          <Cell key={`cell-${index}`} fill={entry.avgPointsStarted > 20 ? '#10b981' : '#f43f5e'} stroke="white" strokeWidth={2} />
                         ))}
                       </Scatter>
                     </ScatterChart>
@@ -282,47 +351,59 @@ const App: React.FC = () => {
             </div>
 
             {/* Detailed Player Table */}
-            <div className="bg-slate-800/40 border border-slate-700 rounded-2xl overflow-hidden">
-              <div className="p-6 border-b border-slate-700 flex justify-between items-center">
-                <h3 className="text-xl font-bold flex items-center gap-2">
-                  <Award className="text-yellow-400" /> Historical Performance Matrix
+            <div className="bg-slate-800/20 border border-slate-700/50 rounded-[2rem] overflow-hidden shadow-2xl backdrop-blur-sm">
+              <div className="p-8 border-b border-slate-700/50 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+                <h3 className="text-3xl font-black flex items-center gap-4 tracking-tighter uppercase">
+                  <div className="p-3 bg-yellow-500/20 rounded-2xl"><Award className="text-yellow-400" size={24} /></div>
+                  Historical Matrix
                 </h3>
               </div>
               <div className="overflow-x-auto">
                 <table className="w-full text-left">
-                  <thead className="bg-slate-700/50 text-slate-300 text-sm uppercase">
+                  <thead className="bg-slate-900/50 text-slate-500 text-[10px] uppercase font-black tracking-[0.2em]">
                     <tr>
-                      <th className="px-6 py-4">Player</th>
-                      <th className="px-6 py-4 text-center">Legacy Loyalty</th>
-                      <th className="px-6 py-4">Avg Start Pts</th>
-                      <th className="px-6 py-4">Avg Bench Pts</th>
-                      <th className="px-6 py-4">Efficiency</th>
+                      <th className="px-10 py-6">Player Identity</th>
+                      <th className="px-6 py-6 text-center">Legacy Loyalty</th>
+                      <th className="px-6 py-6 text-center">Scoring Power</th>
+                      <th className="px-6 py-6 text-center">Bench Impact</th>
+                      <th className="px-10 py-6">Decision Efficiency</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-slate-700">
+                  <tbody className="divide-y divide-slate-800">
                     {playerData.map((player) => {
                       const efficiency = player.avgPointsStarted > 0 
                         ? (player.avgPointsStarted / (player.avgPointsStarted + player.avgPointsBenched) * 100).toFixed(0)
                         : "0";
                       return (
-                        <tr key={player.id} className="hover:bg-slate-700/30 transition-colors">
-                          <td className="px-6 py-4">
-                            <div className="font-bold">{player.name}</div>
-                            <div className="text-xs text-slate-500">{player.position} • {player.team}</div>
-                          </td>
-                          <td className="px-6 py-4 text-center">
-                             <span className="text-sm font-mono">{player.ownedByMeCount} Seasons</span>
-                          </td>
-                          <td className="px-6 py-4 font-mono text-emerald-400">{player.avgPointsStarted.toFixed(1)}</td>
-                          <td className="px-6 py-4 font-mono text-red-400">{player.avgPointsBenched.toFixed(1)}</td>
-                          <td className="px-6 py-4">
-                            <div className="w-full bg-slate-700 rounded-full h-2">
-                              <div 
-                                className={`h-2 rounded-full ${Number(efficiency) > 70 ? 'bg-emerald-500' : 'bg-orange-500'}`} 
-                                style={{ width: `${efficiency}%` }}
-                              />
+                        <tr key={player.id} className="hover:bg-indigo-500/5 transition-all duration-300 group">
+                          <td className="px-10 py-8">
+                            <div className="flex items-center gap-4">
+                              <div className="w-12 h-12 bg-slate-700/50 rounded-xl flex items-center justify-center font-black text-lg group-hover:bg-indigo-500/20 group-hover:text-indigo-400 transition-colors">
+                                {player.name.split(' ').map(n => n[0]).join('')}
+                              </div>
+                              <div>
+                                <div className="font-black text-lg text-white group-hover:text-indigo-100">{player.name}</div>
+                                <div className="text-xs text-slate-500 font-bold uppercase tracking-wider">{player.position} • {player.team}</div>
+                              </div>
                             </div>
-                            <span className="text-[10px] text-slate-500 mt-1 block">{efficiency}% Start Rate</span>
+                          </td>
+                          <td className="px-6 py-8 text-center">
+                             <div className="inline-block px-3 py-1 bg-slate-800 border border-slate-700 rounded-lg text-sm font-black text-indigo-400">
+                                {player.ownedByMeCount} SEASONS
+                             </div>
+                          </td>
+                          <td className="px-6 py-8 text-center font-black text-xl text-emerald-400">{player.avgPointsStarted.toFixed(1)}</td>
+                          <td className="px-6 py-8 text-center font-black text-xl text-red-500/70">{player.avgPointsBenched.toFixed(1)}</td>
+                          <td className="px-10 py-8">
+                            <div className="flex items-center gap-4">
+                              <div className="flex-1 bg-slate-700/50 rounded-full h-3 p-0.5">
+                                <div 
+                                  className={`h-full rounded-full transition-all duration-1000 shadow-[0_0_10px_rgba(0,0,0,0.3)] ${Number(efficiency) > 75 ? 'bg-gradient-to-r from-emerald-600 to-emerald-400' : 'bg-gradient-to-r from-orange-600 to-orange-400'}`} 
+                                  style={{ width: `${efficiency}%` }}
+                                />
+                              </div>
+                              <span className="text-sm font-black text-white w-10">{efficiency}%</span>
+                            </div>
                           </td>
                         </tr>
                       );
@@ -337,24 +418,24 @@ const App: React.FC = () => {
   };
 
   return (
-    <div className="min-h-screen bg-[#0f172a] text-slate-200 font-sans selection:bg-purple-500/30">
-      <nav className="border-b border-slate-800 bg-slate-900/50 backdrop-blur-md sticky top-0 z-50">
-        <div className="max-w-7xl mx-auto px-4 h-16 flex items-center justify-between">
-          <div className="flex items-center gap-2 cursor-pointer" onClick={() => setCurrentStep(AppState.LOGIN)}>
-            <div className="bg-purple-600 p-1.5 rounded-lg shadow-lg shadow-purple-600/20">
-              <History className="text-white" size={20} />
+    <div className="min-h-screen bg-[#020617] text-slate-200 font-sans selection:bg-indigo-500/30">
+      <nav className="border-b border-white/5 bg-[#020617]/80 backdrop-blur-xl sticky top-0 z-50">
+        <div className="max-w-7xl mx-auto px-6 h-20 flex items-center justify-between">
+          <div className="flex items-center gap-3 cursor-pointer group" onClick={() => setCurrentStep(AppState.LOGIN)}>
+            <div className="bg-gradient-to-br from-indigo-600 to-purple-700 p-2.5 rounded-2xl shadow-2xl shadow-indigo-600/20 group-hover:scale-110 transition-transform">
+              <History className="text-white" size={24} />
             </div>
-            <span className="font-black text-xl tracking-tight hidden sm:inline-block">GRIDIRON LEGACY</span>
+            <span className="font-black text-2xl tracking-tighter text-white group-hover:text-indigo-400 transition-colors">GRIDIRON LEGACY</span>
           </div>
           
           {currentStep !== AppState.LOGIN && (
-            <div className="flex items-center gap-4">
+            <div className="flex items-center gap-6">
                <button 
                 onClick={handleLogout}
-                className="flex items-center gap-2 text-slate-400 hover:text-white transition-colors"
+                className="group flex items-center gap-2 text-slate-500 hover:text-white transition-colors font-black text-xs uppercase tracking-widest"
               >
-                <LogOut size={18} />
-                <span className="hidden sm:inline">Disconnect Yahoo</span>
+                <LogOut size={18} className="group-hover:translate-x-1 transition-transform" />
+                Disconnect
               </button>
             </div>
           )}
@@ -363,20 +444,27 @@ const App: React.FC = () => {
 
       <main>
         {loading && currentStep === AppState.LOGIN && (
-          <div className="fixed inset-0 bg-slate-950/60 backdrop-blur-sm z-50 flex flex-col items-center justify-center">
-            <Loader2 className="w-12 h-12 text-purple-500 animate-spin mb-4" />
-            <p className="text-xl font-medium">Authenticating with Yahoo...</p>
+          <div className="fixed inset-0 bg-[#020617]/80 backdrop-blur-md z-[100] flex flex-col items-center justify-center animate-in fade-in">
+            <div className="relative">
+              <div className="w-20 h-20 border-4 border-indigo-500/20 border-t-indigo-500 rounded-full animate-spin" />
+              <History className="absolute inset-0 m-auto text-indigo-500 animate-pulse" size={32} />
+            </div>
+            <p className="text-2xl font-black mt-8 tracking-tighter text-white uppercase italic">Contacting League Central...</p>
+            <p className="text-slate-500 mt-2 font-medium">Securing OAuth 2.0 Handshake</p>
           </div>
         )}
         {renderContent()}
       </main>
 
-      <footer className="border-t border-slate-800 py-10 bg-slate-900/30 mt-auto">
-        <div className="max-w-7xl mx-auto px-4 flex flex-col md:flex-row justify-between items-center gap-6 text-slate-500 text-sm">
-          <div>© 2024 Gridiron Legacy. Using Direct Yahoo Fantasy API Connection.</div>
-          <div className="flex gap-6">
-            <a href="https://developer.yahoo.com/fantasysports/guide/" target="_blank" className="hover:text-purple-400">Yahoo API Guide</a>
-            <a href="#" className="hover:text-purple-400">Privacy</a>
+      <footer className="border-t border-white/5 py-12 bg-slate-900/20 mt-20">
+        <div className="max-w-7xl mx-auto px-6 flex flex-col md:flex-row justify-between items-center gap-8">
+          <div className="text-slate-500 text-xs font-bold uppercase tracking-[0.2em]">
+            © 2024 GRIDIRON LEGACY • BUILT WITH SECURE PROXY ARCHITECTURE
+          </div>
+          <div className="flex gap-8">
+            <a href="https://developer.yahoo.com/fantasysports/guide/" target="_blank" className="text-xs font-black uppercase tracking-widest text-slate-600 hover:text-indigo-400 transition-colors">Yahoo API</a>
+            <a href="#" className="text-xs font-black uppercase tracking-widest text-slate-600 hover:text-indigo-400 transition-colors">Security</a>
+            <a href="#" className="text-xs font-black uppercase tracking-widest text-slate-600 hover:text-indigo-400 transition-colors">Privacy</a>
           </div>
         </div>
       </footer>

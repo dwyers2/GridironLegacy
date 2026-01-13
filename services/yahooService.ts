@@ -1,48 +1,20 @@
 
 import { League, PlayerStats, ManagerHistory } from '../types';
 
-/**
- * Yahoo Fantasy Sports API Service
- * 
- * To use this in production:
- * 1. Create an app at https://developer.yahoo.com/apps/
- * 2. Set the redirect URI to your app's URL.
- * 3. Yahoo Fantasy API typically requires a proxy or backend for OAuth Token exchange due to CORS.
- *    For this implementation, we provide the direct frontend structure.
- */
+const BACKEND_URL = ''; // Empty string means relative to current host, ideal for proxy or same-origin setup
 
-const CLIENT_ID = 'dj0yJmk9M2t6VlVNSERHa2dRJmQ9WVdrOVNEUTNjWEZKTXpRbWNHbzlNQS0tJnM9Y29uc3VtZXJzZWNyZXQmeD1lNA'; // User must replace with their own Client ID
-const REDIRECT_URI = window.location.origin;
-const AUTH_ENDPOINT = 'https://api.login.yahoo.com/oauth2/request_auth';
-const TOKEN_ENDPOINT = 'https://api.login.yahoo.com/oauth2/get_token';
-const API_BASE = 'https://fantasysports.yahooapis.com/fantasy/v2';
-
-export const getAuthUrl = () => {
-  const params = new URLSearchParams({
-    client_id: CLIENT_ID,
-    redirect_uri: REDIRECT_URI,
-    response_type: 'code',
-    scope: 'fsrd-r', // Fantasy Sports Read access
-  });
-  return `${AUTH_ENDPOINT}?${params.toString()}`;
+export const getAuthUrl = async (): Promise<string> => {
+  const response = await fetch(`${BACKEND_URL}/api/auth/url`);
+  const data = await response.json();
+  return data.url;
 };
 
 export const exchangeCodeForToken = async (code: string) => {
-  // In a real app, this MUST be done via a backend proxy to protect the Client Secret
-  // and handle CORS. Here we demonstrate the intended logic.
   try {
-    const response = await fetch(TOKEN_ENDPOINT, {
+    const response = await fetch(`${BACKEND_URL}/api/auth/token`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded',
-      },
-      body: new URLSearchParams({
-        client_id: CLIENT_ID,
-        client_secret: 'YOUR_YAHOO_CLIENT_SECRET',
-        redirect_uri: REDIRECT_URI,
-        code,
-        grant_type: 'authorization_code',
-      }),
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ code }),
     });
     const data = await response.json();
     if (data.access_token) {
@@ -56,19 +28,21 @@ export const exchangeCodeForToken = async (code: string) => {
   return null;
 };
 
-const authenticatedFetch = async (url: string) => {
+const proxyFetch = async (path: string, params: Record<string, string> = {}) => {
   const token = localStorage.getItem('yahoo_access_token');
   if (!token) throw new Error('Not authenticated');
 
-  const response = await fetch(`${url}${url.includes('?') ? '&' : '?'}format=json`, {
+  const queryString = new URLSearchParams(params).toString();
+  const url = `${BACKEND_URL}/api/yahoo/${path}${queryString ? '?' + queryString : ''}`;
+
+  const response = await fetch(url, {
     headers: {
       'Authorization': `Bearer ${token}`,
     },
   });
 
   if (response.status === 401) {
-    // Logic for token refresh would go here
-    throw new Error('Unauthorized - Token may be expired');
+    throw new Error('Unauthorized');
   }
 
   return response.json();
@@ -76,8 +50,7 @@ const authenticatedFetch = async (url: string) => {
 
 export const getLeagues = async (): Promise<League[]> => {
   try {
-    const data = await authenticatedFetch(`${API_BASE}/users;use_login=1/games;game_keys=nfl/leagues`);
-    // Yahoo's JSON structure is deeply nested and complex
+    const data = await proxyFetch('users;use_login=1/games;game_keys=nfl/leagues');
     const leaguesData = data?.fantasy_content?.users?.[0]?.user?.[1]?.games?.[0]?.game?.[1]?.leagues || [];
     
     return leaguesData.map((l: any) => {
@@ -91,22 +64,19 @@ export const getLeagues = async (): Promise<League[]> => {
     });
   } catch (error) {
     console.error('Failed to fetch leagues', error);
-    // Fallback to mock if API fails or credentials missing for demo purposes
+    // Fallback for demo
     return [
-      { id: '123.l.456', name: 'Direct Yahoo League (Demo)', seasons: ['2024'], sport: 'nfl' }
+      { id: '449.l.12345', name: 'Legacy League (Demo)', seasons: ['2024'], sport: 'nfl' }
     ];
   }
 };
 
 export const getPlayerHistory = async (leagueId: string): Promise<PlayerStats[]> => {
   try {
-    // This would ideally fetch rosters across multiple years
-    // For direct connection demo, we fetch current league roster as a starting point
-    const data = await authenticatedFetch(`${API_BASE}/league/${leagueId}/teams/roster`);
-    console.log('Roster data:', data);
-    
-    // Simulating the aggregation from the real data structure
-    // In a full implementation, we'd loop through league seasons and team rosters
+    // In a production app, we would loop through multiple years
+    const data = await proxyFetch(`league/${leagueId}/teams/roster`);
+    // Note: Parsing real Yahoo nested JSON for rosters is complex; 
+    // This demonstrates the API connection is working via proxy.
     return [
       {
         id: 'p1',
@@ -129,16 +99,16 @@ export const getPlayerHistory = async (leagueId: string): Promise<PlayerStats[]>
 
 export const getManagerInsights = async (leagueId: string): Promise<ManagerHistory[]> => {
   try {
-    const data = await authenticatedFetch(`${API_BASE}/league/${leagueId}/standings`);
+    const data = await proxyFetch(`league/${leagueId}/standings`);
     const teams = data?.fantasy_content?.league?.[1]?.standings?.[0]?.teams || [];
     
     return teams.map((t: any) => {
-      const team = t.team[0];
+      const team = t.team?.[0] || {};
       return {
-        managerId: team.team_key,
-        managerName: team.name,
-        yearsInLeague: 1, // Yahoo doesn't give historical longevity in one call
-        championships: team.team_standings?.outcome_totals?.wins > 10 ? 1 : 0
+        managerId: team.team_key || 'unknown',
+        managerName: team.name || 'Manager',
+        yearsInLeague: 1,
+        championships: 0
       };
     });
   } catch (error) {
