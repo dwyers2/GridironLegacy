@@ -13,11 +13,9 @@ const CLIENT_SECRET = process.env.YAHOO_CLIENT_SECRET || '011a5070590e2debc9221f
 // Fixed REDIRECT_URI syntax from previous iteration
 const REDIRECT_URI = process.env.REDIRECT_URI || 'https://nonexotically-nonphonetical-aidan.ngrok-free.dev'; 
 
-// Initialize Gemini on the backend
-const genAI = new GoogleGenAI({ apiKey: process.env.API_KEY });
-
-app.use(cors());
-app.use(express.json());
+// Fix: Address 'NextHandleFunction' vs 'PathParams' mismatch by casting to any
+app.use(cors() as any);
+app.use(express.json() as any);
 
 // 1. Auth URL Generation
 app.get('/api/auth/url', (req, res) => {
@@ -89,8 +87,11 @@ app.post('/api/insights', async (req, res) => {
   
   Keep it concise and punchy in a JSON format.`;
 
+  // Fix: Initialize GoogleGenAI right before the API call to ensure use of the latest environment configuration
+  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+
   try {
-    const response = await genAI.models.generateContent({
+    const response = await ai.models.generateContent({
       model: "gemini-3-pro-preview",
       contents: prompt,
       config: {
@@ -103,11 +104,13 @@ app.post('/api/insights', async (req, res) => {
             rivalJewel: { type: Type.STRING },
             summary: { type: Type.STRING }
           },
-          required: ["frequentPick", "missedOpportunity", "rivalJewel", "summary"]
+          // Fix: Use propertyOrdering instead of required to match SDK guidelines
+          propertyOrdering: ["frequentPick", "missedOpportunity", "rivalJewel", "summary"]
         }
       }
     });
 
+    // Fix: Access response.text property directly as a getter (not a method)
     const text = response.text?.trim() || "{}";
     res.json(JSON.parse(text));
   } catch (error: any) {
