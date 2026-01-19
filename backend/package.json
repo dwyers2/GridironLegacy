@@ -1,0 +1,13 @@
+{
+  "scripts": {
+    "dev": "tsx watch server.ts",
+    "build": "tsc",
+    "start": "node server.ts"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.11"
+  },
+  "dependencies": {
+    "tsx": "^4.21.0"
+  }
+}
