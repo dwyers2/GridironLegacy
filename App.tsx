@@ -1,5 +1,4 @@
-
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { AppState, League, PlayerStats, ManagerHistory } from './types';
 import * as yahooService from './services/yahooService';
 import * as geminiService from './services/geminiService';
@@ -22,52 +21,88 @@ const App: React.FC = () => {
   const [aiInsights, setAiInsights] = useState<any>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  
+  // ✅ Prevent double-processing with ref
+  const isProcessingOAuth = useRef(false);
+  const hasProcessedCode = useRef(false);
 
-  // Handle OAuth Callback
   useEffect(() => {
-    const urlParams = new URLSearchParams(window.location.search);
-    const code = urlParams.get('code');
-    
-    if (code) {
-      const initAuth = async () => {
-        setLoading(true);
-        const tokenData = await yahooService.exchangeCodeForToken(code);
-        if (tokenData) {
-          // Clean URL
-          window.history.replaceState({}, document.title, window.location.pathname);
-          const fetchedLeagues = await yahooService.getLeagues();
-          setLeagues(fetchedLeagues);
-          setCurrentStep(AppState.LEAGUE_SELECT);
-        } else {
-          setError("Failed to authenticate with Yahoo. Ensure your backend has the correct Client Secret.");
-        }
-        setLoading(false);
-      };
-      initAuth();
-    } else if (localStorage.getItem('yahoo_access_token')) {
-      const resumeSession = async () => {
-        setLoading(true);
+    const handleOAuthCallback = async () => {
+      // Prevent concurrent execution
+      if (isProcessingOAuth.current) {
+        console.log('OAuth already being processed, skipping...');
+        return;
+      }
+
+      const urlParams = new URLSearchParams(window.location.search);
+      const code = urlParams.get('code');
+
+      // ✅ Check if we already have valid tokens FIRST
+      const existingToken = localStorage.getItem('yahoo_access_token');
+      const expiresAt = localStorage.getItem('yahoo_access_token_expires');
+      
+      if (existingToken && expiresAt && Date.now() < Number(expiresAt)) {
+        console.log('Valid token already exists, loading leagues...');
         try {
           const fetchedLeagues = await yahooService.getLeagues();
           setLeagues(fetchedLeagues);
           setCurrentStep(AppState.LEAGUE_SELECT);
-        } catch (e) {
-          localStorage.removeItem('yahoo_access_token');
-          setCurrentStep(AppState.LOGIN);
+          
+          // Clean up URL if there's a code
+          if (code) {
+            window.history.replaceState({}, document.title, window.location.pathname);
+          }
+        } catch (err: any) {
+          console.error('Failed to load leagues:', err);
+          setError('Failed to load leagues. Please try again.');
         }
-        setLoading(false);
-      };
-      resumeSession();
-    }
-  }, []);
+        return;
+      }
+
+      // ✅ Only process code if we have one AND haven't processed it yet
+      if (code && !hasProcessedCode.current) {
+        isProcessingOAuth.current = true;
+        hasProcessedCode.current = true;
+        setLoading(true);
+        
+        try {
+          console.log('Exchanging OAuth code...');
+          
+          // ❌ DON'T store tokens here - exchangeCodeForToken already does it
+          await yahooService.exchangeCodeForToken(code);
+          
+          console.log('Token exchange successful, fetching leagues...');
+          const fetchedLeagues = await yahooService.getLeagues();
+          setLeagues(fetchedLeagues);
+          setCurrentStep(AppState.LEAGUE_SELECT);
+          setError(null);
+        } catch (err: any) {
+          console.error('OAuth exchange error:', err);
+          setError(`Authentication failed: ${err.message}`);
+          
+          // Clean URL on error
+          window.history.replaceState({}, document.title, window.location.pathname);
+        } finally {
+          setLoading(false);
+          isProcessingOAuth.current = false;
+        }
+      }
+    };
+
+    handleOAuthCallback();
+  }, []); // Only run once on mount
 
   const handleLogin = async () => {
     setLoading(true);
+    setError(null);
+
     try {
       const authUrl = await yahooService.getAuthUrl();
+      console.log('Redirecting to Yahoo OAuth:', authUrl);
       window.location.href = authUrl;
-    } catch (err) {
-      setError("Could not connect to the backend server. Make sure it is running.");
+    } catch (err: any) {
+      console.error('Failed to get auth URL:', err);
+      setError('Could not connect to the backend server. Make sure it is running on port 3001.');
       setLoading(false);
     }
   };
@@ -75,7 +110,10 @@ const App: React.FC = () => {
   const handleSelectLeague = async (league: League) => {
     setLoading(true);
     setSelectedLeague(league);
+    setError(null);
+    
     try {
+      console.log('Loading league data for:', league.name);
       const players = await yahooService.getPlayerHistory(league.id);
       const managers = await yahooService.getManagerInsights(league.id);
       
@@ -85,6 +123,7 @@ const App: React.FC = () => {
         { id: 'p3', name: 'Travis Kelce', position: 'TE', team: 'KC', ownedByMeCount: 0, ownedByOthersCount: 4, avgPointsStarted: 18.2, avgPointsBenched: 0.0, totalOwnershipYears: 4, lastOwnedSeason: '2023' },
       ];
 
+      console.log('Generating AI insights...');
       const insights = await geminiService.getLegacyInsights(finalPlayers);
       
       setPlayerData(finalPlayers);
@@ -94,17 +133,23 @@ const App: React.FC = () => {
       ]);
       setAiInsights(insights);
       setCurrentStep(AppState.DASHBOARD);
-    } catch (err) {
-      setError("Failed to load league details via proxy.");
+    } catch (err: any) {
+      console.error('Failed to load league details:', err);
+      setError(`Failed to load league details: ${err.message}`);
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   };
 
   const handleLogout = () => {
     localStorage.removeItem('yahoo_access_token');
     localStorage.removeItem('yahoo_refresh_token');
+    localStorage.removeItem('yahoo_access_token_expires');
+    hasProcessedCode.current = false; // Reset for next login
     setCurrentStep(AppState.LOGIN);
     setSelectedLeague(null);
+    setLeagues([]);
+    setError(null);
   };
 
   const handleBack = () => {
