@@ -1,0 +1,100 @@
+import * as db from './db';
+
+interface SeasonRosterData {
+  season: string;
+  gameId: string;
+  leagueKey: string;
+  teams: Array<{
+    teamKey: string;
+    name: string;
+    managerId: string;
+    managerName: string;
+    season?: string;
+  }>;
+  rosters: { [teamKey: string]: any[] };
+}
+
+/**
+ * Cache season roster data to database
+ */
+export function cacheSeasonRosterData(data: SeasonRosterData) {
+  db.runInTransaction(() => {
+    // Cache league
+    db.cacheLeague(data.leagueKey, `League ${data.season}`, data.season, data.gameId);
+
+    // Cache each team and their roster
+    for (const team of data.teams) {
+      db.cacheTeam(
+        team.teamKey,
+        data.leagueKey,
+        team.name,
+        team.managerId,
+        team.managerName,
+        data.season
+      );
+
+      // Cache roster entries
+      const roster = data.rosters[team.teamKey] || [];
+      for (const playerWrapper of roster) {
+        // Parse player data (same logic as aggregatePlayerOwnership)
+        let playerInfo: any = {};
+
+        if (Array.isArray(playerWrapper)) {
+          const firstElement = playerWrapper[0];
+          if (Array.isArray(firstElement)) {
+            firstElement.forEach((item: any) => {
+              if (typeof item === 'object' && item !== null) {
+                Object.assign(playerInfo, item);
+              }
+            });
+          } else if (typeof firstElement === 'object') {
+            playerInfo = firstElement;
+          }
+        } else if (typeof playerWrapper === 'object') {
+          playerInfo = playerWrapper;
+        }
+
+        const playerId = playerInfo.player_id || playerInfo.player_key;
+        if (!playerId) continue;
+
+        const playerName = playerInfo.name?.full || playerInfo.name || 'Unknown';
+        const position = playerInfo.display_position || playerInfo.position_type || playerInfo.primary_position || 'N/A';
+        const nflTeam = playerInfo.editorial_team_abbr || playerInfo.team_abbr || 'FA';
+
+        // Cache player
+        db.cachePlayer(playerId, playerName, position, nflTeam);
+
+        // Cache roster entry
+        db.cacheRosterEntry(team.teamKey, playerId, data.season);
+      }
+    }
+  });
+
+  console.log(`💾 Cached ${data.teams.length} teams from ${data.season} (${data.leagueKey})`);
+}
+
+/**
+ * Get all cached roster data (aggregated by manager)
+ */
+export function getCachedAggregatedData() {
+  return db.getAllManagersWithRosters();
+}
+
+/**
+ * Check if we should fetch fresh data for a season
+ * Returns true if cache is older than 7 days or doesn't exist
+ */
+export function shouldFetchSeasonData(leagueKey: string): boolean {
+  const cacheAge = db.getLeagueCacheAge(leagueKey);
+  if (!cacheAge) return true;
+
+  const daysSinceCache = (Date.now() - cacheAge.getTime()) / (1000 * 60 * 60 * 24);
+  return daysSinceCache > 7; // Re-fetch if older than 7 days
+}
+
+/**
+ * Get list of seasons we need to fetch (those not cached or stale)
+ */
+export function getMissingSeasonsForLeague(allLeagueKeys: string[]): string[] {
+  return allLeagueKeys.filter(key => shouldFetchSeasonData(key));
+}
