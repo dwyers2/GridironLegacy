@@ -1,15 +1,16 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { AppState, League, PlayerStats, ManagerHistory } from './types';
+import { AppState, League, PlayerStats, ManagerHistory, ManagerOwnershipData, ManagerTendency, FetchProgress } from './types';
 import * as yahooService from './services/yahooService';
 import * as geminiService from './services/geminiService';
-import { 
-  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, 
-  Cell, ScatterChart, Scatter, ZAxis 
+import ManagerInsights from './components/ManagerInsights';
+import {
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
+  Cell, ScatterChart, Scatter, ZAxis
 } from 'recharts';
-import { 
-  LayoutDashboard, History, Users, Award, 
-  ChevronRight, ArrowLeft, LogOut, Loader2, Sparkles, 
-  Trophy, TrendingUp, Info, ShieldAlert
+import {
+  LayoutDashboard, History, Users, Award,
+  ChevronRight, ArrowLeft, LogOut, Loader2, Sparkles,
+  Trophy, TrendingUp, Info, ShieldAlert, BarChart3
 } from 'lucide-react';
 
 const App: React.FC = () => {
@@ -18,10 +19,13 @@ const App: React.FC = () => {
   const [selectedLeague, setSelectedLeague] = useState<League | null>(null);
   const [playerData, setPlayerData] = useState<PlayerStats[]>([]);
   const [managerData, setManagerData] = useState<ManagerHistory[]>([]);
+  const [managerOwnership, setManagerOwnership] = useState<ManagerOwnershipData[]>([]);
+  const [managerTendencies, setManagerTendencies] = useState<ManagerTendency[]>([]);
   const [aiInsights, setAiInsights] = useState<any>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  
+  const [fetchProgress, setFetchProgress] = useState<FetchProgress | null>(null);
+
   // ✅ Prevent double-processing with ref
   const isProcessingOAuth = useRef(false);
   const hasProcessedCode = useRef(false);
@@ -45,16 +49,25 @@ const App: React.FC = () => {
         console.log('Valid token already exists, loading leagues...');
         try {
           const fetchedLeagues = await yahooService.getLeagues();
-          setLeagues(fetchedLeagues);
-          setCurrentStep(AppState.LEAGUE_SELECT);
-          
+          console.log('Leagues fetched:', fetchedLeagues);
+
+          if (fetchedLeagues && fetchedLeagues.length > 0) {
+            setLeagues(fetchedLeagues);
+            setCurrentStep(AppState.LEAGUE_SELECT);
+          } else {
+            console.warn('No leagues returned from API');
+            setError('No leagues found. Make sure you have active Yahoo Fantasy leagues.');
+            setCurrentStep(AppState.LOGIN);
+          }
+
           // Clean up URL if there's a code
           if (code) {
             window.history.replaceState({}, document.title, window.location.pathname);
           }
         } catch (err: any) {
           console.error('Failed to load leagues:', err);
-          setError('Failed to load leagues. Please try again.');
+          setError(`Failed to load leagues: ${err.message}`);
+          setCurrentStep(AppState.LOGIN);
         }
         return;
       }
@@ -73,9 +86,16 @@ const App: React.FC = () => {
           
           console.log('Token exchange successful, fetching leagues...');
           const fetchedLeagues = await yahooService.getLeagues();
-          setLeagues(fetchedLeagues);
-          setCurrentStep(AppState.LEAGUE_SELECT);
-          setError(null);
+          console.log('Leagues fetched after OAuth:', fetchedLeagues);
+
+          if (fetchedLeagues && fetchedLeagues.length > 0) {
+            setLeagues(fetchedLeagues);
+            setCurrentStep(AppState.LEAGUE_SELECT);
+            setError(null);
+          } else {
+            console.warn('No leagues found after successful OAuth');
+            setError('Authentication successful but no leagues found. Make sure you have active Yahoo Fantasy Football leagues.');
+          }
         } catch (err: any) {
           console.error('OAuth exchange error:', err);
           setError(`Authentication failed: ${err.message}`);
@@ -123,9 +143,14 @@ const App: React.FC = () => {
         { id: 'p3', name: 'Travis Kelce', position: 'TE', team: 'KC', ownedByMeCount: 0, ownedByOthersCount: 4, avgPointsStarted: 18.2, avgPointsBenched: 0.0, totalOwnershipYears: 4, lastOwnedSeason: '2023' },
       ];
 
-      console.log('Generating AI insights...');
-      const insights = await geminiService.getLegacyInsights(finalPlayers);
-      
+      console.log('Using fallback insights (Gemini disabled)...');
+      const insights = {
+        frequentPick: finalPlayers[0]?.name ? `${finalPlayers[0].name} - Your go-to player` : "Loading...",
+        missedOpportunity: "Good start/sit decisions overall",
+        rivalJewel: "Analysis in progress",
+        summary: "Manager insights available in the dedicated tab."
+      };
+
       setPlayerData(finalPlayers);
       setManagerData(managers.length > 0 ? managers : [
         { managerId: 'm1', managerName: 'You (The Commissioner)', yearsInLeague: 4, championships: 1 },
@@ -141,6 +166,182 @@ const App: React.FC = () => {
     }
   };
 
+  const handleViewManagerInsights = async () => {
+    if (!selectedLeague) return;
+
+    setLoading(true);
+    setError(null);
+    setFetchProgress(null);
+    setCurrentStep(AppState.MANAGER_INSIGHTS);
+
+    try {
+      console.log('Loading multi-season manager ownership data...');
+
+      // Use new multi-season fetching function
+      const { allSeasonData, aggregatedOwnership, errors } = await yahooService.getMultiSeasonRosters(
+        selectedLeague.id,
+        {
+          onProgress: (progress) => {
+            setFetchProgress(progress);
+          }
+        }
+      );
+
+      // Log any non-critical errors
+      if (errors.length > 0) {
+        console.warn('Some seasons had errors:', errors);
+      }
+
+      console.log('📊 Aggregated ownership data:', aggregatedOwnership);
+      console.log('📊 Number of managers:', aggregatedOwnership.length);
+      aggregatedOwnership.forEach(manager => {
+        console.log(`  Manager: ${manager.managerName}, Players: ${manager.players.length}, Seasons: ${manager.seasonsTracked?.join(', ')}`);
+      });
+
+      setManagerOwnership(aggregatedOwnership);
+      setFetchProgress(null);
+
+      // Check for cached AI tendencies and identify which managers need analysis
+      console.log('💾 Checking for cached AI tendencies...');
+      console.log(`📊 allSeasonData.length = ${allSeasonData.length} (if >0, new data was fetched)`);
+      let cachedTendencies: ManagerTendency[] = [];
+      const newDataFetched = allSeasonData.length > 0;
+
+      try {
+        const cacheRes = await fetch('http://localhost:3001/api/cache/tendencies');
+        if (cacheRes.ok) {
+          const cacheData = await cacheRes.json();
+          cachedTendencies = cacheData.tendencies || [];
+          console.log(`💾 Found ${cachedTendencies.length} cached tendencies`);
+        }
+      } catch (err) {
+        console.warn('⚠️ Could not check tendencies cache:', err);
+      }
+
+      // Find managers missing AI analysis (either no cache entry or basic fallback text)
+      const managersNeedingAnalysis = newDataFetched
+        ? aggregatedOwnership // If new data fetched, regenerate all
+        : aggregatedOwnership.filter(m => {
+            const cached = cachedTendencies.find(t => t.managerId === m.managerId);
+            if (!cached) return true; // Not cached at all
+
+            // Detect fallback patterns (both frontend and backend generated)
+            const analysis = cached.analysis || '';
+            const isFrontendFallback = analysis.includes('Prefers') && analysis.includes('positions. Loyalty:');
+            const isBackendFallback = analysis.includes('Favors') && analysis.includes('Loyalty score:');
+            const isFallbackText = isFrontendFallback || isBackendFallback;
+
+            if (isFallbackText) {
+              console.log(`  📝 ${m.managerName} has fallback text, needs AI regeneration`);
+            }
+            return isFallbackText;
+          });
+
+      console.log(`🔄 newDataFetched=${newDataFetched}, managersNeedingAnalysis=${managersNeedingAnalysis.length}`);
+
+      console.log(`🔍 ${managersNeedingAnalysis.length} managers need AI analysis`);
+
+      let finalTendencies: ManagerTendency[] = [];
+
+      if (managersNeedingAnalysis.length === 0) {
+        // All managers have valid cached tendencies
+        console.log('✅ Using fully cached AI tendencies');
+        finalTendencies = cachedTendencies;
+      } else {
+        // Need to generate tendencies for some/all managers
+        console.log(`🤖 Requesting AI analysis for ${managersNeedingAnalysis.length} managers...`);
+
+        try {
+          const newTendencies = await geminiService.getManagerTendencies(managersNeedingAnalysis);
+          console.log(`✅ Received ${newTendencies.length} AI tendencies`);
+
+          // Merge: use new tendencies for analyzed managers, keep cached for others
+          const newTendencyMap = new Map(newTendencies.map(t => [t.managerId, t]));
+          finalTendencies = aggregatedOwnership.map(manager => {
+            // Prefer newly generated, then cached, then generate basic fallback
+            if (newTendencyMap.has(manager.managerId)) {
+              return newTendencyMap.get(manager.managerId)!;
+            }
+            const cached = cachedTendencies.find(t => t.managerId === manager.managerId);
+            if (cached) {
+              return cached;
+            }
+            // Fallback for any remaining
+            const positionCounts: { [key: string]: number } = {};
+            const players = manager.players || [];
+            players.forEach(p => {
+              if (p.position) {
+                positionCounts[p.position] = (positionCounts[p.position] || 0) + (p.timesOwned || 0);
+              }
+            });
+            const topPositions = Object.entries(positionCounts)
+              .sort(([, a], [, b]) => b - a)
+              .slice(0, 3)
+              .map(([pos]) => pos);
+            const loyaltyScore = Math.round((players.filter(p => (p.timesOwned || 0) > 1).length / Math.max(players.length, 1)) * 100);
+            return {
+              managerId: manager.managerId,
+              managerName: manager.managerName,
+              analysis: `Prefers ${topPositions.join(', ')} positions. Loyalty: ${loyaltyScore}%`,
+              topPositions,
+              loyaltyScore
+            };
+          });
+
+          // Cache all tendencies (including newly generated ones)
+          try {
+            await fetch('http://localhost:3001/api/cache/tendencies', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ tendencies: finalTendencies })
+            });
+            console.log('💾 AI tendencies cached');
+          } catch (cacheErr) {
+            console.warn('⚠️ Failed to cache tendencies:', cacheErr);
+          }
+        } catch (geminiErr) {
+          console.warn('⚠️ Gemini error, using cached + basic fallbacks:', geminiErr);
+          // Use whatever we have cached, generate basic for the rest
+          finalTendencies = aggregatedOwnership.map(manager => {
+            const cached = cachedTendencies.find(t => t.managerId === manager.managerId);
+            if (cached) return cached;
+
+            const positionCounts: { [key: string]: number } = {};
+            const players = manager.players || [];
+            players.forEach(p => {
+              if (p.position) {
+                positionCounts[p.position] = (positionCounts[p.position] || 0) + (p.timesOwned || 0);
+              }
+            });
+            const topPositions = Object.entries(positionCounts)
+              .sort(([, a], [, b]) => b - a)
+              .slice(0, 3)
+              .map(([pos]) => pos);
+            const loyaltyScore = Math.round((players.filter(p => (p.timesOwned || 0) > 1).length / Math.max(players.length, 1)) * 100);
+            return {
+              managerId: manager.managerId,
+              managerName: manager.managerName,
+              analysis: `Prefers ${topPositions.join(', ')} positions. Loyalty: ${loyaltyScore}%`,
+              topPositions,
+              loyaltyScore
+            };
+          });
+        }
+      }
+
+      setManagerTendencies(finalTendencies);
+
+      console.log('✅ Multi-season manager insights loaded');
+    } catch (err: any) {
+      console.error('Failed to load manager insights:', err);
+      setError(`Failed to load manager insights: ${err.message}`);
+      setCurrentStep(AppState.DASHBOARD);
+    } finally {
+      setLoading(false);
+      setFetchProgress(null);
+    }
+  };
+
   const handleLogout = () => {
     localStorage.removeItem('yahoo_access_token');
     localStorage.removeItem('yahoo_refresh_token');
@@ -153,7 +354,8 @@ const App: React.FC = () => {
   };
 
   const handleBack = () => {
-    if (currentStep === AppState.DASHBOARD) setCurrentStep(AppState.LEAGUE_SELECT);
+    if (currentStep === AppState.MANAGER_INSIGHTS) setCurrentStep(AppState.DASHBOARD);
+    else if (currentStep === AppState.DASHBOARD) setCurrentStep(AppState.LEAGUE_SELECT);
     else if (currentStep === AppState.LEAGUE_SELECT) setCurrentStep(AppState.LOGIN);
   };
 
@@ -227,8 +429,8 @@ const App: React.FC = () => {
                        <Award className="text-indigo-400" size={32} />
                     </div>
                     <div>
-                      <h3 className="text-2xl font-bold group-hover:text-indigo-400 transition-colors">{league.name}</h3>
-                      <p className="text-slate-400 font-medium">NFL • {league.seasons.join(', ')}</p>
+                      <h3 className="text-2xl font-bold group-hover:text-indigo-400 transition-colors">{league.name || 'Unnamed League'}</h3>
+                      <p className="text-slate-400 font-medium">NFL • {league.seasons?.join(', ') || 'N/A'}</p>
                       <div className="flex gap-2 mt-2">
                         <span className="text-[10px] bg-slate-700/50 text-slate-400 px-2 py-0.5 rounded-md font-mono border border-slate-600">ID: {league.id}</span>
                         <span className="text-[10px] bg-indigo-500/10 text-indigo-400 px-2 py-0.5 rounded-md font-bold uppercase tracking-wider">Historical Data Active</span>
@@ -262,6 +464,13 @@ const App: React.FC = () => {
                 </p>
               </div>
               <div className="flex gap-4">
+                <button
+                  onClick={handleViewManagerInsights}
+                  className="group flex items-center gap-3 px-6 py-3 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 rounded-2xl font-bold transition-all shadow-xl shadow-purple-600/20"
+                >
+                  <BarChart3 size={20} className="group-hover:scale-110 transition-transform" />
+                  Manager Insights
+                </button>
                 <div className="px-6 py-3 bg-slate-800/80 rounded-2xl border border-slate-700 shadow-xl backdrop-blur-sm">
                   <span className="text-[10px] text-slate-500 block uppercase font-black tracking-widest mb-1">Status</span>
                   <span className="text-lg font-bold text-green-400 flex items-center gap-2">
@@ -416,29 +625,31 @@ const App: React.FC = () => {
                   </thead>
                   <tbody className="divide-y divide-slate-800">
                     {playerData.map((player) => {
-                      const efficiency = player.avgPointsStarted > 0 
-                        ? (player.avgPointsStarted / (player.avgPointsStarted + player.avgPointsBenched) * 100).toFixed(0)
+                      const avgStarted = player.avgPointsStarted ?? 0;
+                      const avgBenched = player.avgPointsBenched ?? 0;
+                      const efficiency = avgStarted > 0
+                        ? (avgStarted / (avgStarted + avgBenched) * 100).toFixed(0)
                         : "0";
                       return (
                         <tr key={player.id} className="hover:bg-indigo-500/5 transition-all duration-300 group">
                           <td className="px-10 py-8">
                             <div className="flex items-center gap-4">
                               <div className="w-12 h-12 bg-slate-700/50 rounded-xl flex items-center justify-center font-black text-lg group-hover:bg-indigo-500/20 group-hover:text-indigo-400 transition-colors">
-                                {player.name.split(' ').map(n => n[0]).join('')}
+                                {player.name ? player.name.split(' ').map(n => n[0]).join('') : '??'}
                               </div>
                               <div>
-                                <div className="font-black text-lg text-white group-hover:text-indigo-100">{player.name}</div>
-                                <div className="text-xs text-slate-500 font-bold uppercase tracking-wider">{player.position} • {player.team}</div>
+                                <div className="font-black text-lg text-white group-hover:text-indigo-100">{player.name || 'Unknown Player'}</div>
+                                <div className="text-xs text-slate-500 font-bold uppercase tracking-wider">{player.position || 'N/A'} • {player.team || 'FA'}</div>
                               </div>
                             </div>
                           </td>
                           <td className="px-6 py-8 text-center">
                              <div className="inline-block px-3 py-1 bg-slate-800 border border-slate-700 rounded-lg text-sm font-black text-indigo-400">
-                                {player.ownedByMeCount} SEASONS
+                                {player.ownedByMeCount ?? 0} SEASONS
                              </div>
                           </td>
-                          <td className="px-6 py-8 text-center font-black text-xl text-emerald-400">{player.avgPointsStarted.toFixed(1)}</td>
-                          <td className="px-6 py-8 text-center font-black text-xl text-red-500/70">{player.avgPointsBenched.toFixed(1)}</td>
+                          <td className="px-6 py-8 text-center font-black text-xl text-emerald-400">{avgStarted.toFixed(1)}</td>
+                          <td className="px-6 py-8 text-center font-black text-xl text-red-500/70">{avgBenched.toFixed(1)}</td>
                           <td className="px-10 py-8">
                             <div className="flex items-center gap-4">
                               <div className="flex-1 bg-slate-700/50 rounded-full h-3 p-0.5">
@@ -457,6 +668,27 @@ const App: React.FC = () => {
                 </table>
               </div>
             </div>
+          </div>
+        );
+
+      case AppState.MANAGER_INSIGHTS:
+        console.log('Rendering MANAGER_INSIGHTS view', {
+          ownershipCount: managerOwnership.length,
+          tendenciesCount: managerTendencies.length,
+          loading,
+          hasError: !!error
+        });
+        return (
+          <div className="max-w-7xl mx-auto px-4 py-8">
+            <button onClick={handleBack} className="flex items-center gap-2 text-slate-400 hover:text-white mb-6 font-bold text-sm uppercase tracking-widest transition-colors">
+              <ArrowLeft size={16} /> Back to Dashboard
+            </button>
+            <ManagerInsights
+              ownershipData={managerOwnership}
+              tendencies={managerTendencies}
+              loading={loading}
+              fetchProgress={fetchProgress}
+            />
           </div>
         );
     }

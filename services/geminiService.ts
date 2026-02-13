@@ -1,7 +1,7 @@
 
-import { PlayerStats } from "../types";
+import { PlayerStats, ManagerOwnershipData, ManagerTendency } from "../types";
 
-const BACKEND_URL = ''; // Relative to the host
+const BACKEND_URL = ''; // Relative URL - Vite will proxy to localhost:3001
 
 export const getLegacyInsights = async (playerData: PlayerStats[]) => {
   try {
@@ -26,5 +26,38 @@ export const getLegacyInsights = async (playerData: PlayerStats[]) => {
       rivalJewel: "Travis Kelce - A thorn in your side for 4 straight years.",
       summary: "You tend to stick with elite QBs but struggle with WR depth decisions."
     };
+  }
+};
+
+export const getManagerTendencies = async (managerData: ManagerOwnershipData[]): Promise<ManagerTendency[]> => {
+  try {
+    console.log('🤖 Requesting manager tendency analysis from Gemini...');
+
+    const response = await fetch(`${BACKEND_URL}/api/manager-tendencies`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ managers: managerData })
+    });
+
+    if (!response.ok) {
+      throw new Error('Failed to fetch manager tendencies from backend');
+    }
+
+    const result = await response.json();
+    console.log('✅ Manager tendencies received');
+    return result.tendencies;
+  } catch (error) {
+    console.error("Gemini Manager Tendencies Error:", error);
+
+    // Fallback data
+    return managerData.map(manager => ({
+      managerId: manager.managerId,
+      managerName: manager.managerName,
+      analysis: "Analysis temporarily unavailable. This manager shows consistent patterns in player selection.",
+      topPositions: ['QB', 'RB', 'WR'],
+      loyaltyScore: 75
+    }));
   }
 };
