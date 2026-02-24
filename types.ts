@@ -72,6 +72,24 @@ export interface ManagerTendency {
   loyaltyScore: number;
 }
 
+export interface DraftPick {
+  round: number;
+  pick: number;
+  teamKey: string;
+  managerName: string;
+  playerName: string;
+  position: string;
+  nflTeam: string;
+}
+
+export interface SeasonDraftData {
+  season: string;
+  leagueKey: string;
+  picks: DraftPick[];
+  // Ordered by draft slot (round-1 pick order)
+  teams: Array<{ teamKey: string; managerName: string; draftSlot: number }>;
+}
+
 export enum AppState {
   LOGIN = 'LOGIN',
   LEAGUE_SELECT = 'LEAGUE_SELECT',

@@ -223,6 +223,97 @@ export function tendenciesNeedUpdate(currentSeasons: string[]): boolean {
   return cachedSeasons !== analyzedSeasons;
 }
 
+// Cache draft picks in bulk
+export function cacheDraftPicks(picks: Array<{
+  leagueKey: string;
+  season: string;
+  round: number;
+  pick: number;
+  teamKey: string;
+  playerKey: string;
+  playerName: string;
+  position: string;
+  nflTeam: string;
+}>) {
+  const stmt = db.prepare(`
+    INSERT OR REPLACE INTO draft_picks (league_key, season, round, pick, team_key, player_key, player_name, position, nfl_team, last_updated)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+  `);
+  const transaction = db.transaction(() => {
+    for (const p of picks) {
+      stmt.run(p.leagueKey, p.season, p.round, p.pick, p.teamKey, p.playerKey, p.playerName, p.position, p.nflTeam);
+    }
+  });
+  transaction();
+}
+
+// Check if draft data exists for a league
+export function hasDraftData(leagueKey: string): boolean {
+  const result = db.prepare(`SELECT COUNT(*) as count FROM draft_picks WHERE league_key = ?`).get(leagueKey) as { count: number };
+  return result.count > 0;
+}
+
+// Get draft results for a specific league with manager names + player info from cache
+export function getDraftResultsForLeague(leagueKey: string): Array<{
+  round: number;
+  pick: number;
+  team_key: string;
+  player_key: string;
+  player_name: string;
+  position: string;
+  nfl_team: string;
+  season: string;
+  manager_name: string;
+}> {
+  // Join with players table using the numeric part of player_key ("423.p.30977" -> "30977")
+  // Falls back to stored player_name if player not in players table yet
+  return db.prepare(`
+    SELECT dp.round, dp.pick, dp.team_key, dp.player_key, dp.season,
+           CASE WHEN dp.player_name != '' THEN dp.player_name
+                ELSE COALESCE(p.player_name, dp.player_key) END as player_name,
+           CASE WHEN dp.position != '' THEN dp.position
+                ELSE COALESCE(p.position, '') END as position,
+           CASE WHEN dp.nfl_team != '' THEN dp.nfl_team
+                ELSE COALESCE(p.nfl_team, '') END as nfl_team,
+           COALESCE(t.manager_name, dp.team_key) as manager_name
+    FROM draft_picks dp
+    LEFT JOIN teams t ON dp.team_key = t.team_key
+    LEFT JOIN players p ON SUBSTR(dp.player_key, INSTR(dp.player_key, '.p.') + 3) = p.player_id
+    WHERE dp.league_key = ?
+    ORDER BY dp.round, dp.pick
+  `).all(leagueKey) as any[];
+}
+
+// Bulk resolve player info from player_keys (e.g. "423.p.30977")
+export function resolvePlayersByKeys(playerKeys: string[]): Array<{
+  player_key: string;
+  player_name: string;
+  position: string;
+  nfl_team: string;
+}> {
+  if (playerKeys.length === 0) return [];
+  const placeholders = playerKeys.map(() => '?').join(', ');
+  const numericIds = playerKeys.map(k => {
+    const m = k.match(/\.p\.(\d+)$/);
+    return m ? m[1] : k;
+  });
+  const rows = db.prepare(`
+    SELECT player_id, player_name, position, nfl_team FROM players
+    WHERE player_id IN (${placeholders})
+  `).all(...numericIds) as Array<{ player_id: string; player_name: string; position: string; nfl_team: string }>;
+
+  const idToRow = new Map(rows.map(r => [r.player_id, r]));
+  return playerKeys.map((key, i) => {
+    const row = idToRow.get(numericIds[i]);
+    return {
+      player_key: key,
+      player_name: row?.player_name || '',
+      position: row?.position || '',
+      nfl_team: row?.nfl_team || '',
+    };
+  });
+}
+
 // Transaction helper for bulk inserts
 export function runInTransaction<T>(fn: () => T): T {
   const transaction = db.transaction(fn);
