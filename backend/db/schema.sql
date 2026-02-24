@@ -59,6 +59,26 @@ CREATE TABLE IF NOT EXISTS cache_metadata (
   last_updated DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
+-- Draft picks (historical draft results for all seasons)
+CREATE TABLE IF NOT EXISTS draft_picks (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  league_key TEXT NOT NULL,
+  season TEXT NOT NULL,
+  round INTEGER NOT NULL,
+  pick INTEGER NOT NULL,
+  team_key TEXT NOT NULL,
+  player_key TEXT NOT NULL,
+  player_name TEXT NOT NULL DEFAULT '',
+  position TEXT NOT NULL DEFAULT '',
+  nfl_team TEXT NOT NULL DEFAULT '',
+  last_updated DATETIME DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(league_key, round, pick)
+);
+
+CREATE INDEX IF NOT EXISTS idx_draft_picks_league ON draft_picks(league_key);
+CREATE INDEX IF NOT EXISTS idx_draft_picks_season ON draft_picks(season);
+CREATE INDEX IF NOT EXISTS idx_draft_picks_team ON draft_picks(team_key);
+
 -- AI-generated manager tendencies (cached to avoid regenerating)
 CREATE TABLE IF NOT EXISTS manager_tendencies (
   manager_id TEXT PRIMARY KEY,

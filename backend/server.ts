@@ -652,6 +652,51 @@ app.post('/api/cache/tendencies', (req, res) => {
   }
 });
 
+// Bulk resolve player names from player_keys
+app.post('/api/players/resolve', (req, res) => {
+  try {
+    const { playerKeys } = req.body;
+    if (!Array.isArray(playerKeys)) {
+      return res.status(400).json({ error: 'playerKeys array required' });
+    }
+    const resolved = db.resolvePlayersByKeys(playerKeys);
+    res.json({ players: resolved });
+  } catch (err: any) {
+    console.error('❌ Failed to resolve players:', err);
+    res.status(500).json({ error: 'Failed to resolve players', message: err.message });
+  }
+});
+
+// Cache draft results for a league season
+app.post('/api/cache/draft', (req, res) => {
+  try {
+    const { leagueKey, season, picks } = req.body;
+    if (!leagueKey || !season || !Array.isArray(picks)) {
+      return res.status(400).json({ error: 'leagueKey, season, and picks array required' });
+    }
+    console.log(`📥 Caching draft data for ${season} (${leagueKey}) - ${picks.length} picks`);
+    db.cacheDraftPicks(picks.map((p: any) => ({ ...p, leagueKey, season })));
+    console.log(`✅ Cached ${picks.length} draft picks for ${season}`);
+    res.json({ success: true, count: picks.length });
+  } catch (err: any) {
+    console.error('❌ Failed to cache draft data:', err);
+    res.status(500).json({ error: 'Failed to cache draft data', message: err.message });
+  }
+});
+
+// Get cached draft results for a league
+app.get('/api/cache/draft/:leagueKey', (req, res) => {
+  try {
+    const { leagueKey } = req.params;
+    const exists = db.hasDraftData(leagueKey);
+    const picks = exists ? db.getDraftResultsForLeague(leagueKey) : [];
+    res.json({ picks, count: picks.length, exists });
+  } catch (err: any) {
+    console.error('❌ Failed to get draft data:', err);
+    res.status(500).json({ error: 'Failed to get draft data', message: err.message });
+  }
+});
+
 // Clear only AI tendencies cache (keeps roster data)
 app.post('/api/cache/tendencies/clear', (req, res) => {
   try {

@@ -1,4 +1,4 @@
-import { League, PlayerStats, ManagerHistory, SeasonRosterData, TeamInfo, ManagerOwnershipData, PlayerOwnership, FetchProgress } from '../types';
+import { League, PlayerStats, ManagerHistory, SeasonRosterData, TeamInfo, ManagerOwnershipData, PlayerOwnership, FetchProgress, DraftPick, SeasonDraftData } from '../types';
 
 const BACKEND_URL = 'http://localhost:3001/api';
 
@@ -1024,4 +1024,219 @@ const aggregatePlayerOwnership = (
     seasonsTracked: Array.from(data.seasonsTracked).sort((a, b) => Number(b) - Number(a)),
     players: Array.from(data.playerMap.values())
   }));
+};
+
+// 🏈 Fetch & cache draft results for a single league season
+// Returns SeasonDraftData. Also caches results to backend DB.
+const fetchLeagueDraftResults = async (
+  leagueKey: string,
+  season: string
+): Promise<SeasonDraftData> => {
+  const token = await getAccessToken();
+
+  // Fetch teams to build teamKey -> managerName map
+  const teamMap: Map<string, string> = new Map();
+  try {
+    const teamsRes = await fetch(`${BACKEND_URL}/yahoo/league/${leagueKey}/teams`, {
+      headers: { 'Authorization': `Bearer ${token}` }
+    });
+    if (teamsRes.ok) {
+      const teamsData = await teamsRes.json();
+      const league = teamsData?.fantasy_content?.league;
+      if (Array.isArray(league)) {
+        const teamsWrapper = league[1]?.teams;
+        const teamCount = teamsWrapper?.count || 0;
+        for (let i = 0; i < teamCount; i++) {
+          const teamWrapper = teamsWrapper[i];
+          if (!teamWrapper?.team) continue;
+          const team = teamWrapper.team;
+          let teamInfo: any = {};
+          if (Array.isArray(team[0])) {
+            team[0].forEach((item: any) => { if (typeof item === 'object') Object.assign(teamInfo, item); });
+          } else {
+            teamInfo = team[0] || {};
+          }
+          const teamKey = teamInfo.team_key;
+          if (!teamKey) continue;
+          let managerName = teamInfo.name;
+          if (teamInfo.managers && Array.isArray(teamInfo.managers)) {
+            const mgr = teamInfo.managers[0]?.manager;
+            if (mgr) managerName = mgr.nickname || mgr.email || teamInfo.name;
+          }
+          teamMap.set(teamKey, managerName || teamKey);
+        }
+      }
+    }
+  } catch (_) {}
+
+  // Fetch draft results
+  const draftRes = await fetch(`${BACKEND_URL}/yahoo/league/${leagueKey}/draftresults`, {
+    headers: { 'Authorization': `Bearer ${token}` }
+  });
+
+  if (!draftRes.ok) {
+    throw new Error(`Failed to fetch draft results for ${leagueKey}: ${draftRes.status}`);
+  }
+
+  const draftData = await draftRes.json();
+  const leagueArr = draftData?.fantasy_content?.league;
+  if (!Array.isArray(leagueArr)) {
+    return { season, leagueKey, picks: [], teams: [] };
+  }
+
+  const draftResultsWrapper = leagueArr[1]?.draft_results;
+  if (!draftResultsWrapper) {
+    return { season, leagueKey, picks: [], teams: [] };
+  }
+
+  const count = draftResultsWrapper.count || 0;
+  const rawPicks: Array<{ round: number; pick: number; teamKey: string; playerKey: string }> = [];
+
+  for (let i = 0; i < count; i++) {
+    const dr = draftResultsWrapper[i]?.draft_result;
+    if (!dr) continue;
+    rawPicks.push({
+      round: parseInt(dr.round),
+      pick: parseInt(dr.pick),
+      teamKey: dr.team_key,
+      playerKey: dr.player_key || '',
+    });
+  }
+
+  if (rawPicks.length === 0) {
+    return { season, leagueKey, picks: [], teams: [] };
+  }
+
+  // Bulk-resolve player names from backend DB (single HTTP request)
+  const playerInfoMap: Map<string, { playerName: string; position: string; nflTeam: string }> = new Map();
+  try {
+    const resolveRes = await fetch(`${BACKEND_URL}/players/resolve`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ playerKeys: rawPicks.map(p => p.playerKey) }),
+    });
+    if (resolveRes.ok) {
+      const { players: resolved } = await resolveRes.json();
+      for (const p of resolved) {
+        playerInfoMap.set(p.player_key, { playerName: p.player_name, position: p.position, nflTeam: p.nfl_team });
+      }
+    }
+  } catch (_) {}
+
+  const picks: DraftPick[] = rawPicks.map((rp) => {
+    const info = playerInfoMap.get(rp.playerKey);
+    return {
+      round: rp.round,
+      pick: rp.pick,
+      teamKey: rp.teamKey,
+      managerName: teamMap.get(rp.teamKey) || rp.teamKey,
+      playerName: info?.playerName || '',
+      position: info?.position || '',
+      nflTeam: info?.nflTeam || '',
+    };
+  });
+
+  // Cache to backend DB (keep raw player_key for SQL join resolution)
+  try {
+    await fetch(`${BACKEND_URL}/cache/draft`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        leagueKey,
+        season,
+        picks: rawPicks.map((rp, idx) => ({
+          round: rp.round,
+          pick: rp.pick,
+          teamKey: rp.teamKey,
+          playerKey: rp.playerKey,
+          playerName: picks[idx].playerName,
+          position: picks[idx].position,
+          nflTeam: picks[idx].nflTeam,
+        })),
+      }),
+    });
+  } catch (_) {}
+
+  const round1 = picks.filter(p => p.round === 1).sort((a, b) => a.pick - b.pick);
+  const teams = round1.map((p, idx) => ({
+    teamKey: p.teamKey,
+    managerName: p.managerName,
+    draftSlot: idx + 1,
+  }));
+
+  return { season, leagueKey, picks, teams };
+};
+
+// 🏈 Get multi-season draft results (follows renew links, uses cache)
+export const getMultiSeasonDraftResults = async (
+  currentLeagueKey: string,
+  onProgress?: (current: number, total: number, season: string) => void
+): Promise<SeasonDraftData[]> => {
+  console.log(`🏈 Fetching multi-season draft results for ${currentLeagueKey}`);
+
+  // Build league chain by following renew links
+  const leagueChain: Array<{ leagueKey: string; season: string }> = [];
+  let currentKey: string | undefined = currentLeagueKey;
+
+  while (currentKey) {
+    const details = await getLeagueDetails(currentKey);
+    if (!details) break;
+    leagueChain.push({ leagueKey: currentKey, season: details.season });
+    currentKey = details.renew;
+  }
+
+  console.log(`🔗 Draft chain: ${leagueChain.map(l => l.season).join(', ')}`);
+
+  const results: SeasonDraftData[] = [];
+
+  for (let i = 0; i < leagueChain.length; i++) {
+    const { leagueKey, season } = leagueChain[i];
+
+    // Check cache first
+    try {
+      const cacheRes = await fetch(`${BACKEND_URL}/cache/draft/${leagueKey}`);
+      if (cacheRes.ok) {
+        const cacheData = await cacheRes.json();
+        if (cacheData.exists && cacheData.picks.length > 0) {
+          console.log(`  💾 Using cached draft data for ${season}`);
+          const cachedPicks: DraftPick[] = cacheData.picks.map((p: any) => ({
+            round: p.round,
+            pick: p.pick,
+            teamKey: p.team_key,
+            managerName: p.manager_name,
+            playerName: p.player_name,
+            position: p.position,
+            nflTeam: p.nfl_team,
+          }));
+          const round1 = cachedPicks.filter(p => p.round === 1).sort((a, b) => a.pick - b.pick);
+          results.push({
+            season,
+            leagueKey,
+            picks: cachedPicks,
+            teams: round1.map((p, idx) => ({ teamKey: p.teamKey, managerName: p.managerName, draftSlot: idx + 1 })),
+          });
+          continue;
+        }
+      }
+    } catch (_) {}
+
+    onProgress?.(i + 1, leagueChain.length, season);
+
+    try {
+      console.log(`  🌐 Fetching draft results for ${season} (${leagueKey})...`);
+      const seasonDraft = await fetchLeagueDraftResults(leagueKey, season);
+      if (seasonDraft.picks.length > 0) {
+        results.push(seasonDraft);
+        console.log(`  ✅ ${seasonDraft.picks.length} picks for ${season}`);
+      }
+    } catch (err: any) {
+      console.warn(`  ⚠️ Failed to fetch draft results for ${season}:`, err.message);
+    }
+
+    await new Promise(resolve => setTimeout(resolve, 300));
+  }
+
+  // Sort by season descending (most recent first)
+  results.sort((a, b) => Number(b.season) - Number(a.season));
+  return results;
 };

@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { AppState, League, PlayerStats, ManagerHistory, ManagerOwnershipData, ManagerTendency, FetchProgress } from './types';
+import { AppState, League, PlayerStats, ManagerHistory, ManagerOwnershipData, ManagerTendency, FetchProgress, SeasonDraftData } from './types';
 import * as yahooService from './services/yahooService';
 import * as geminiService from './services/geminiService';
 import ManagerInsights from './components/ManagerInsights';
+import DraftResults from './components/DraftResults';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
   Cell, ScatterChart, Scatter, ZAxis
@@ -10,7 +11,7 @@ import {
 import {
   LayoutDashboard, History, Users, Award,
   ChevronRight, ArrowLeft, LogOut, Loader2, Sparkles,
-  Trophy, TrendingUp, Info, ShieldAlert, BarChart3
+  Trophy, TrendingUp, Info, ShieldAlert, BarChart3, ClipboardList
 } from 'lucide-react';
 
 const App: React.FC = () => {
@@ -25,6 +26,9 @@ const App: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [fetchProgress, setFetchProgress] = useState<FetchProgress | null>(null);
+  const [draftData, setDraftData] = useState<SeasonDraftData[]>([]);
+  const [draftLoading, setDraftLoading] = useState(false);
+  const [dashboardTab, setDashboardTab] = useState<'overview' | 'draft'>('overview');
 
   // ✅ Prevent double-processing with ref
   const isProcessingOAuth = useRef(false);
@@ -157,7 +161,19 @@ const App: React.FC = () => {
         { managerId: 'm2', managerName: 'League Rival', yearsInLeague: 4, championships: 2 },
       ]);
       setAiInsights(insights);
+      setDraftData([]);
+      setDashboardTab('overview');
       setCurrentStep(AppState.DASHBOARD);
+
+      // Kick off draft history fetch in the background (non-blocking)
+      setDraftLoading(true);
+      yahooService.getMultiSeasonDraftResults(league.id).then(data => {
+        setDraftData(data);
+      }).catch(err => {
+        console.warn('Draft history fetch failed:', err);
+      }).finally(() => {
+        setDraftLoading(false);
+      });
     } catch (err: any) {
       console.error('Failed to load league details:', err);
       setError(`Failed to load league details: ${err.message}`);
@@ -480,194 +496,239 @@ const App: React.FC = () => {
               </div>
             </div>
 
-            {/* AI Insights Card */}
-            <div className="relative overflow-hidden bg-gradient-to-br from-indigo-600/20 via-slate-900/90 to-purple-600/20 border border-white/10 p-8 rounded-[2.5rem] shadow-2xl backdrop-blur-xl group">
-              <div className="absolute top-0 right-0 p-8 opacity-10 group-hover:scale-110 transition-transform">
-                <Sparkles size={120} className="text-indigo-400" />
-              </div>
-              <div className="relative z-10">
-                <div className="flex items-center gap-3 mb-8">
-                  <div className="p-2 bg-indigo-500/20 rounded-xl border border-indigo-500/30">
-                    <Sparkles className="text-indigo-400" size={24} />
-                  </div>
-                  <h2 className="text-2xl font-black text-white uppercase tracking-tighter">AI Scouter's Legacy Report</h2>
-                </div>
-                <div className="grid md:grid-cols-3 gap-10">
-                  <div className="space-y-3">
-                    <div className="flex items-center gap-2">
-                      <div className="w-6 h-6 rounded-full bg-emerald-500/20 border border-emerald-500/30 flex items-center justify-center">
-                        <Trophy size={12} className="text-emerald-400" />
-                      </div>
-                      <div className="text-xs font-black text-indigo-300 uppercase tracking-widest">Stalwart Pick</div>
-                    </div>
-                    <p className="text-lg text-slate-200 font-medium leading-snug">{aiInsights?.frequentPick || "Analyzing rosters..."}</p>
-                  </div>
-                  <div className="space-y-3 border-l border-white/5 pl-10">
-                    <div className="flex items-center gap-2">
-                      <div className="w-6 h-6 rounded-full bg-red-500/20 border border-red-500/30 flex items-center justify-center">
-                        <TrendingUp size={12} className="text-red-400" />
-                      </div>
-                      <div className="text-xs font-black text-indigo-300 uppercase tracking-widest">Efficiency Gap</div>
-                    </div>
-                    <p className="text-lg text-slate-200 font-medium leading-snug">{aiInsights?.missedOpportunity || "Crunching stats..."}</p>
-                  </div>
-                  <div className="space-y-3 border-l border-white/5 pl-10">
-                    <div className="flex items-center gap-2">
-                      <div className="w-6 h-6 rounded-full bg-purple-500/20 border border-purple-500/30 flex items-center justify-center">
-                        <Award size={12} className="text-purple-400" />
-                      </div>
-                      <div className="text-xs font-black text-indigo-300 uppercase tracking-widest">The Nemesis</div>
-                    </div>
-                    <p className="text-lg text-slate-200 font-medium leading-snug">{aiInsights?.rivalJewel || "Identifying rivals..."}</p>
-                  </div>
-                </div>
-                <div className="mt-10 pt-8 border-t border-white/5">
-                  <div className="text-2xl font-light text-indigo-100 italic leading-relaxed">
-                    "{aiInsights?.summary || "Deep-diving into league history to reveal your management identity..."}"
-                  </div>
-                </div>
-              </div>
+            {/* Tab Bar */}
+            <div className="flex gap-2 border-b border-slate-700/50 pb-0">
+              <button
+                onClick={() => setDashboardTab('overview')}
+                className={`flex items-center gap-2 px-5 py-3 font-bold text-sm uppercase tracking-widest transition-all border-b-2 -mb-px ${dashboardTab === 'overview' ? 'border-indigo-500 text-indigo-400' : 'border-transparent text-slate-500 hover:text-slate-300'}`}
+              >
+                <BarChart3 size={16} />
+                Overview
+              </button>
+              <button
+                onClick={() => setDashboardTab('draft')}
+                className={`flex items-center gap-2 px-5 py-3 font-bold text-sm uppercase tracking-widest transition-all border-b-2 -mb-px ${dashboardTab === 'draft' ? 'border-indigo-500 text-indigo-400' : 'border-transparent text-slate-500 hover:text-slate-300'}`}
+              >
+                <ClipboardList size={16} />
+                Draft History
+                {draftLoading && <Loader2 size={12} className="animate-spin text-indigo-400" />}
+                {!draftLoading && draftData.length > 0 && (
+                  <span className="text-[10px] bg-indigo-500/20 text-indigo-400 px-1.5 py-0.5 rounded-full font-black border border-indigo-500/30">
+                    {draftData.length}
+                  </span>
+                )}
+              </button>
             </div>
 
-            {/* Charts Row */}
-            <div className="grid lg:grid-cols-2 gap-8">
-              <div className="bg-slate-800/40 border border-slate-700/50 p-8 rounded-3xl shadow-lg backdrop-blur-sm">
-                <div className="flex items-center justify-between mb-10">
-                  <h3 className="text-2xl font-black flex items-center gap-3 tracking-tight">
-                    <div className="p-2 bg-blue-500/20 rounded-lg"><Users className="text-blue-400" size={20} /></div>
-                    OWNERSHIP DENSITY
-                  </h3>
-                  <div className="p-1.5 hover:bg-slate-700 rounded-full cursor-help transition-colors">
-                    <Info size={18} className="text-slate-500" />
+            {/* Overview Tab */}
+            {dashboardTab === 'overview' && (
+              <>
+                {/* AI Insights Card */}
+                <div className="relative overflow-hidden bg-gradient-to-br from-indigo-600/20 via-slate-900/90 to-purple-600/20 border border-white/10 p-8 rounded-[2.5rem] shadow-2xl backdrop-blur-xl group">
+                  <div className="absolute top-0 right-0 p-8 opacity-10 group-hover:scale-110 transition-transform">
+                    <Sparkles size={120} className="text-indigo-400" />
+                  </div>
+                  <div className="relative z-10">
+                    <div className="flex items-center gap-3 mb-8">
+                      <div className="p-2 bg-indigo-500/20 rounded-xl border border-indigo-500/30">
+                        <Sparkles className="text-indigo-400" size={24} />
+                      </div>
+                      <h2 className="text-2xl font-black text-white uppercase tracking-tighter">AI Scouter's Legacy Report</h2>
+                    </div>
+                    <div className="grid md:grid-cols-3 gap-10">
+                      <div className="space-y-3">
+                        <div className="flex items-center gap-2">
+                          <div className="w-6 h-6 rounded-full bg-emerald-500/20 border border-emerald-500/30 flex items-center justify-center">
+                            <Trophy size={12} className="text-emerald-400" />
+                          </div>
+                          <div className="text-xs font-black text-indigo-300 uppercase tracking-widest">Stalwart Pick</div>
+                        </div>
+                        <p className="text-lg text-slate-200 font-medium leading-snug">{aiInsights?.frequentPick || "Analyzing rosters..."}</p>
+                      </div>
+                      <div className="space-y-3 border-l border-white/5 pl-10">
+                        <div className="flex items-center gap-2">
+                          <div className="w-6 h-6 rounded-full bg-red-500/20 border border-red-500/30 flex items-center justify-center">
+                            <TrendingUp size={12} className="text-red-400" />
+                          </div>
+                          <div className="text-xs font-black text-indigo-300 uppercase tracking-widest">Efficiency Gap</div>
+                        </div>
+                        <p className="text-lg text-slate-200 font-medium leading-snug">{aiInsights?.missedOpportunity || "Crunching stats..."}</p>
+                      </div>
+                      <div className="space-y-3 border-l border-white/5 pl-10">
+                        <div className="flex items-center gap-2">
+                          <div className="w-6 h-6 rounded-full bg-purple-500/20 border border-purple-500/30 flex items-center justify-center">
+                            <Award size={12} className="text-purple-400" />
+                          </div>
+                          <div className="text-xs font-black text-indigo-300 uppercase tracking-widest">The Nemesis</div>
+                        </div>
+                        <p className="text-lg text-slate-200 font-medium leading-snug">{aiInsights?.rivalJewel || "Identifying rivals..."}</p>
+                      </div>
+                    </div>
+                    <div className="mt-10 pt-8 border-t border-white/5">
+                      <div className="text-2xl font-light text-indigo-100 italic leading-relaxed">
+                        "{aiInsights?.summary || "Deep-diving into league history to reveal your management identity..."}"
+                      </div>
+                    </div>
                   </div>
                 </div>
-                <div className="h-80">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <BarChart data={playerData} layout="vertical" margin={{ left: 20 }}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="#334155" horizontal={true} vertical={false} />
-                      <XAxis type="number" stroke="#64748b" axisLine={false} tickLine={false} fontSize={10} />
-                      <YAxis dataKey="name" type="category" stroke="#94a3b8" width={100} fontSize={12} fontWeight="bold" axisLine={false} tickLine={false} />
-                      <Tooltip 
-                        contentStyle={{ backgroundColor: '#0f172a', border: '1px solid #334155', borderRadius: '12px', padding: '12px', boxShadow: '0 10px 15px -3px rgba(0,0,0,0.5)' }}
-                        itemStyle={{ color: '#cbd5e1', fontSize: '12px' }}
-                        cursor={{ fill: 'rgba(59, 130, 246, 0.1)' }}
-                      />
-                      <Legend verticalAlign="top" align="right" iconType="circle" />
-                      <Bar dataKey="ownedByMeCount" name="Your Teams" fill="#6366f1" radius={[0, 10, 10, 0]} barSize={20} />
-                      <Bar dataKey="ownedByOthersCount" name="Opponents" fill="#3b82f6" radius={[0, 10, 10, 0]} barSize={20} />
-                    </BarChart>
-                  </ResponsiveContainer>
-                </div>
-              </div>
 
-              <div className="bg-slate-800/40 border border-slate-700/50 p-8 rounded-3xl shadow-lg backdrop-blur-sm">
-                <div className="flex items-center justify-between mb-10">
-                  <h3 className="text-2xl font-black flex items-center gap-3 tracking-tight">
-                    <div className="p-2 bg-emerald-500/20 rounded-lg"><TrendingUp className="text-emerald-400" size={20} /></div>
-                    MANAGEMENT PRECISION
-                  </h3>
-                  <div className="p-1.5 hover:bg-slate-700 rounded-full cursor-help transition-colors">
-                    <Info size={18} className="text-slate-500" />
+                {/* Charts Row */}
+                <div className="grid lg:grid-cols-2 gap-8">
+                  <div className="bg-slate-800/40 border border-slate-700/50 p-8 rounded-3xl shadow-lg backdrop-blur-sm">
+                    <div className="flex items-center justify-between mb-10">
+                      <h3 className="text-2xl font-black flex items-center gap-3 tracking-tight">
+                        <div className="p-2 bg-blue-500/20 rounded-lg"><Users className="text-blue-400" size={20} /></div>
+                        OWNERSHIP DENSITY
+                      </h3>
+                      <div className="p-1.5 hover:bg-slate-700 rounded-full cursor-help transition-colors">
+                        <Info size={18} className="text-slate-500" />
+                      </div>
+                    </div>
+                    <div className="h-80">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <BarChart data={playerData} layout="vertical" margin={{ left: 20 }}>
+                          <CartesianGrid strokeDasharray="3 3" stroke="#334155" horizontal={true} vertical={false} />
+                          <XAxis type="number" stroke="#64748b" axisLine={false} tickLine={false} fontSize={10} />
+                          <YAxis dataKey="name" type="category" stroke="#94a3b8" width={100} fontSize={12} fontWeight="bold" axisLine={false} tickLine={false} />
+                          <Tooltip
+                            contentStyle={{ backgroundColor: '#0f172a', border: '1px solid #334155', borderRadius: '12px', padding: '12px', boxShadow: '0 10px 15px -3px rgba(0,0,0,0.5)' }}
+                            itemStyle={{ color: '#cbd5e1', fontSize: '12px' }}
+                            cursor={{ fill: 'rgba(59, 130, 246, 0.1)' }}
+                          />
+                          <Legend verticalAlign="top" align="right" iconType="circle" />
+                          <Bar dataKey="ownedByMeCount" name="Your Teams" fill="#6366f1" radius={[0, 10, 10, 0]} barSize={20} />
+                          <Bar dataKey="ownedByOthersCount" name="Opponents" fill="#3b82f6" radius={[0, 10, 10, 0]} barSize={20} />
+                        </BarChart>
+                      </ResponsiveContainer>
+                    </div>
+                  </div>
+
+                  <div className="bg-slate-800/40 border border-slate-700/50 p-8 rounded-3xl shadow-lg backdrop-blur-sm">
+                    <div className="flex items-center justify-between mb-10">
+                      <h3 className="text-2xl font-black flex items-center gap-3 tracking-tight">
+                        <div className="p-2 bg-emerald-500/20 rounded-lg"><TrendingUp className="text-emerald-400" size={20} /></div>
+                        MANAGEMENT PRECISION
+                      </h3>
+                      <div className="p-1.5 hover:bg-slate-700 rounded-full cursor-help transition-colors">
+                        <Info size={18} className="text-slate-500" />
+                      </div>
+                    </div>
+                    <div className="h-80">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <ScatterChart margin={{ top: 20, right: 20, bottom: 20, left: 20 }}>
+                          <CartesianGrid stroke="#334155" strokeDasharray="5 5" />
+                          <XAxis type="number" dataKey="avgPointsBenched" name="Avg Bench Pts" unit=" pts" stroke="#64748b" axisLine={false} tickLine={false} fontSize={10} label={{ value: 'Efficiency Penalty (Bench Pts)', position: 'insideBottom', offset: -10, fill: '#64748b', fontSize: 10 }} />
+                          <YAxis type="number" dataKey="avgPointsStarted" name="Avg Start Pts" unit=" pts" stroke="#64748b" axisLine={false} tickLine={false} fontSize={10} label={{ value: 'Start Success', angle: -90, position: 'insideLeft', fill: '#64748b', fontSize: 10 }} />
+                          <ZAxis type="number" range={[100, 1000]} />
+                          <Tooltip
+                            cursor={{ strokeDasharray: '3 3' }}
+                            content={({ active, payload }) => {
+                              if (active && payload && payload.length) {
+                                const data = payload[0].payload;
+                                return (
+                                  <div className="bg-slate-900 border border-slate-700 p-4 rounded-xl shadow-2xl">
+                                    <p className="font-black text-indigo-400">{data.name}</p>
+                                    <p className="text-sm text-slate-300">Started: {data.avgPointsStarted} pts</p>
+                                    <p className="text-sm text-slate-500">Benched: {data.avgPointsBenched} pts</p>
+                                  </div>
+                                );
+                              }
+                              return null;
+                            }}
+                          />
+                          <Scatter name="Players" data={playerData}>
+                            {playerData.map((entry, index) => (
+                              <Cell key={`cell-${index}`} fill={entry.avgPointsStarted > 20 ? '#10b981' : '#f43f5e'} stroke="white" strokeWidth={2} />
+                            ))}
+                          </Scatter>
+                        </ScatterChart>
+                      </ResponsiveContainer>
+                    </div>
                   </div>
                 </div>
-                <div className="h-80">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <ScatterChart margin={{ top: 20, right: 20, bottom: 20, left: 20 }}>
-                      <CartesianGrid stroke="#334155" strokeDasharray="5 5" />
-                      <XAxis type="number" dataKey="avgPointsBenched" name="Avg Bench Pts" unit=" pts" stroke="#64748b" axisLine={false} tickLine={false} fontSize={10} label={{ value: 'Efficiency Penalty (Bench Pts)', position: 'insideBottom', offset: -10, fill: '#64748b', fontSize: 10 }} />
-                      <YAxis type="number" dataKey="avgPointsStarted" name="Avg Start Pts" unit=" pts" stroke="#64748b" axisLine={false} tickLine={false} fontSize={10} label={{ value: 'Start Success', angle: -90, position: 'insideLeft', fill: '#64748b', fontSize: 10 }} />
-                      <ZAxis type="number" range={[100, 1000]} />
-                      <Tooltip 
-                        cursor={{ strokeDasharray: '3 3' }}
-                        content={({ active, payload }) => {
-                          if (active && payload && payload.length) {
-                            const data = payload[0].payload;
-                            return (
-                              <div className="bg-slate-900 border border-slate-700 p-4 rounded-xl shadow-2xl">
-                                <p className="font-black text-indigo-400">{data.name}</p>
-                                <p className="text-sm text-slate-300">Started: {data.avgPointsStarted} pts</p>
-                                <p className="text-sm text-slate-500">Benched: {data.avgPointsBenched} pts</p>
-                              </div>
-                            );
-                          }
-                          return null;
-                        }}
-                      />
-                      <Scatter name="Players" data={playerData}>
-                        {playerData.map((entry, index) => (
-                          <Cell key={`cell-${index}`} fill={entry.avgPointsStarted > 20 ? '#10b981' : '#f43f5e'} stroke="white" strokeWidth={2} />
-                        ))}
-                      </Scatter>
-                    </ScatterChart>
-                  </ResponsiveContainer>
-                </div>
-              </div>
-            </div>
 
-            {/* Detailed Player Table */}
-            <div className="bg-slate-800/20 border border-slate-700/50 rounded-[2rem] overflow-hidden shadow-2xl backdrop-blur-sm">
-              <div className="p-8 border-b border-slate-700/50 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-                <h3 className="text-3xl font-black flex items-center gap-4 tracking-tighter uppercase">
-                  <div className="p-3 bg-yellow-500/20 rounded-2xl"><Award className="text-yellow-400" size={24} /></div>
-                  Historical Matrix
-                </h3>
-              </div>
-              <div className="overflow-x-auto">
-                <table className="w-full text-left">
-                  <thead className="bg-slate-900/50 text-slate-500 text-[10px] uppercase font-black tracking-[0.2em]">
-                    <tr>
-                      <th className="px-10 py-6">Player Identity</th>
-                      <th className="px-6 py-6 text-center">Legacy Loyalty</th>
-                      <th className="px-6 py-6 text-center">Scoring Power</th>
-                      <th className="px-6 py-6 text-center">Bench Impact</th>
-                      <th className="px-10 py-6">Decision Efficiency</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-800">
-                    {playerData.map((player) => {
-                      const avgStarted = player.avgPointsStarted ?? 0;
-                      const avgBenched = player.avgPointsBenched ?? 0;
-                      const efficiency = avgStarted > 0
-                        ? (avgStarted / (avgStarted + avgBenched) * 100).toFixed(0)
-                        : "0";
-                      return (
-                        <tr key={player.id} className="hover:bg-indigo-500/5 transition-all duration-300 group">
-                          <td className="px-10 py-8">
-                            <div className="flex items-center gap-4">
-                              <div className="w-12 h-12 bg-slate-700/50 rounded-xl flex items-center justify-center font-black text-lg group-hover:bg-indigo-500/20 group-hover:text-indigo-400 transition-colors">
-                                {player.name ? player.name.split(' ').map(n => n[0]).join('') : '??'}
-                              </div>
-                              <div>
-                                <div className="font-black text-lg text-white group-hover:text-indigo-100">{player.name || 'Unknown Player'}</div>
-                                <div className="text-xs text-slate-500 font-bold uppercase tracking-wider">{player.position || 'N/A'} • {player.team || 'FA'}</div>
-                              </div>
-                            </div>
-                          </td>
-                          <td className="px-6 py-8 text-center">
-                             <div className="inline-block px-3 py-1 bg-slate-800 border border-slate-700 rounded-lg text-sm font-black text-indigo-400">
-                                {player.ownedByMeCount ?? 0} SEASONS
-                             </div>
-                          </td>
-                          <td className="px-6 py-8 text-center font-black text-xl text-emerald-400">{avgStarted.toFixed(1)}</td>
-                          <td className="px-6 py-8 text-center font-black text-xl text-red-500/70">{avgBenched.toFixed(1)}</td>
-                          <td className="px-10 py-8">
-                            <div className="flex items-center gap-4">
-                              <div className="flex-1 bg-slate-700/50 rounded-full h-3 p-0.5">
-                                <div 
-                                  className={`h-full rounded-full transition-all duration-1000 shadow-[0_0_10px_rgba(0,0,0,0.3)] ${Number(efficiency) > 75 ? 'bg-gradient-to-r from-emerald-600 to-emerald-400' : 'bg-gradient-to-r from-orange-600 to-orange-400'}`} 
-                                  style={{ width: `${efficiency}%` }}
-                                />
-                              </div>
-                              <span className="text-sm font-black text-white w-10">{efficiency}%</span>
-                            </div>
-                          </td>
+                {/* Detailed Player Table */}
+                <div className="bg-slate-800/20 border border-slate-700/50 rounded-[2rem] overflow-hidden shadow-2xl backdrop-blur-sm">
+                  <div className="p-8 border-b border-slate-700/50 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+                    <h3 className="text-3xl font-black flex items-center gap-4 tracking-tighter uppercase">
+                      <div className="p-3 bg-yellow-500/20 rounded-2xl"><Award className="text-yellow-400" size={24} /></div>
+                      Historical Matrix
+                    </h3>
+                  </div>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left">
+                      <thead className="bg-slate-900/50 text-slate-500 text-[10px] uppercase font-black tracking-[0.2em]">
+                        <tr>
+                          <th className="px-10 py-6">Player Identity</th>
+                          <th className="px-6 py-6 text-center">Legacy Loyalty</th>
+                          <th className="px-6 py-6 text-center">Scoring Power</th>
+                          <th className="px-6 py-6 text-center">Bench Impact</th>
+                          <th className="px-10 py-6">Decision Efficiency</th>
                         </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
+                      </thead>
+                      <tbody className="divide-y divide-slate-800">
+                        {playerData.map((player) => {
+                          const avgStarted = player.avgPointsStarted ?? 0;
+                          const avgBenched = player.avgPointsBenched ?? 0;
+                          const efficiency = avgStarted > 0
+                            ? (avgStarted / (avgStarted + avgBenched) * 100).toFixed(0)
+                            : "0";
+                          return (
+                            <tr key={player.id} className="hover:bg-indigo-500/5 transition-all duration-300 group">
+                              <td className="px-10 py-8">
+                                <div className="flex items-center gap-4">
+                                  <div className="w-12 h-12 bg-slate-700/50 rounded-xl flex items-center justify-center font-black text-lg group-hover:bg-indigo-500/20 group-hover:text-indigo-400 transition-colors">
+                                    {player.name ? player.name.split(' ').map(n => n[0]).join('') : '??'}
+                                  </div>
+                                  <div>
+                                    <div className="font-black text-lg text-white group-hover:text-indigo-100">{player.name || 'Unknown Player'}</div>
+                                    <div className="text-xs text-slate-500 font-bold uppercase tracking-wider">{player.position || 'N/A'} • {player.team || 'FA'}</div>
+                                  </div>
+                                </div>
+                              </td>
+                              <td className="px-6 py-8 text-center">
+                                <div className="inline-block px-3 py-1 bg-slate-800 border border-slate-700 rounded-lg text-sm font-black text-indigo-400">
+                                  {player.ownedByMeCount ?? 0} SEASONS
+                                </div>
+                              </td>
+                              <td className="px-6 py-8 text-center font-black text-xl text-emerald-400">{avgStarted.toFixed(1)}</td>
+                              <td className="px-6 py-8 text-center font-black text-xl text-red-500/70">{avgBenched.toFixed(1)}</td>
+                              <td className="px-10 py-8">
+                                <div className="flex items-center gap-4">
+                                  <div className="flex-1 bg-slate-700/50 rounded-full h-3 p-0.5">
+                                    <div
+                                      className={`h-full rounded-full transition-all duration-1000 shadow-[0_0_10px_rgba(0,0,0,0.3)] ${Number(efficiency) > 75 ? 'bg-gradient-to-r from-emerald-600 to-emerald-400' : 'bg-gradient-to-r from-orange-600 to-orange-400'}`}
+                                      style={{ width: `${efficiency}%` }}
+                                    />
+                                  </div>
+                                  <span className="text-sm font-black text-white w-10">{efficiency}%</span>
+                                </div>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </>
+            )}
+
+            {/* Draft History Tab */}
+            {dashboardTab === 'draft' && (
+              <div className="pt-2">
+                <div className="flex items-center gap-4 mb-6">
+                  <div className="p-3 bg-indigo-500/20 rounded-2xl border border-indigo-500/20">
+                    <ClipboardList className="text-indigo-400" size={24} />
+                  </div>
+                  <div>
+                    <h2 className="text-3xl font-black tracking-tighter uppercase text-white">Draft History</h2>
+                    <p className="text-slate-500 text-sm font-medium mt-0.5">All-time draft results — expand a year to view the grid</p>
+                  </div>
+                </div>
+                <DraftResults draftSeasons={draftData} loading={draftLoading} />
               </div>
-            </div>
+            )}
           </div>
         );
 
