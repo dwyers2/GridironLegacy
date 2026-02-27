@@ -1,19 +1,23 @@
 import React, { useState } from 'react';
 import { ManagerOwnershipData, ManagerTendency, FetchProgress } from '../types';
-import { Users, Trophy, TrendingUp, Sparkles, Heart, Filter } from 'lucide-react';
+import { Users, Trophy, TrendingUp, Sparkles, Heart, Filter, RefreshCw } from 'lucide-react';
 
 interface ManagerInsightsProps {
   ownershipData: ManagerOwnershipData[];
   tendencies: ManagerTendency[];
   loading: boolean;
   fetchProgress?: FetchProgress | null;
+  onRefreshTendency?: (managerId: string) => void;
+  refreshingManagers?: Set<string>;
 }
 
 const ManagerInsights: React.FC<ManagerInsightsProps> = ({
   ownershipData,
   tendencies,
   loading,
-  fetchProgress
+  fetchProgress,
+  onRefreshTendency,
+  refreshingManagers
 }) => {
   const [activeTab, setActiveTab] = useState<'ownership' | 'tendencies'>('ownership');
   const [ownershipFilter, setOwnershipFilter] = useState(3);
@@ -287,12 +291,25 @@ const ManagerInsights: React.FC<ManagerInsightsProps> = ({
                 <div className="p-3 bg-indigo-500/20 rounded-xl border border-indigo-500/30">
                   <Sparkles className="text-indigo-400" size={24} />
                 </div>
-                <div>
+                <div className="flex-1">
                   <h3 className="text-2xl font-black text-white">{tendency.managerName}</h3>
                   <p className="text-xs text-slate-500 uppercase font-bold tracking-wider">
                     AI Analysis
                   </p>
                 </div>
+                {onRefreshTendency && (
+                  <button
+                    onClick={() => onRefreshTendency(tendency.managerId)}
+                    disabled={refreshingManagers?.has(tendency.managerId)}
+                    className="p-2 rounded-lg bg-slate-800/60 hover:bg-indigo-500/20 border border-slate-700 hover:border-indigo-500/40 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+                    title="Refresh AI summary"
+                  >
+                    <RefreshCw
+                      size={15}
+                      className={`text-slate-400 hover:text-indigo-400 transition-colors ${refreshingManagers?.has(tendency.managerId) ? 'animate-spin' : ''}`}
+                    />
+                  </button>
+                )}
               </div>
 
               {/* Stats */}

@@ -80,6 +80,8 @@ export interface DraftPick {
   playerName: string;
   position: string;
   nflTeam: string;
+  /** Set when this pick slot was acquired via trade; holds the original owner's name */
+  originalManagerName?: string;
 }
 
 export interface SeasonDraftData {

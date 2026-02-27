@@ -380,11 +380,13 @@ Keep it analytical but entertaining, like a color commentator. Return ONLY the s
 
 // 6️⃣ Manager tendency analysis - computes stats from data, Gemini only for summaries
 app.post('/api/manager-tendencies', async (req, res) => {
-  const { managers } = req.body;
+  const { managers, targetManagerIds } = req.body;
 
   if (!managers || !Array.isArray(managers)) {
     return res.status(400).json({ error: 'Invalid request - managers array required' });
   }
+
+  const targetSet: Set<string> | null = targetManagerIds ? new Set<string>(targetManagerIds) : null;
 
   console.log('\n📊 Generating manager tendency analysis...');
   console.log(`  Received ${managers.length} managers`);
@@ -461,13 +463,19 @@ app.post('/api/manager-tendencies', async (req, res) => {
         continue;
       }
 
-      // Calculate this manager's rank
+      // Skip if not in target list (when refreshing specific managers)
+      if (targetSet && !targetSet.has(manager.managerId)) {
+        continue;
+      }
+
+      // Calculate this manager's rank (percentile-based to avoid overlap bugs with tight score ranges)
       const loyaltyRank = sortedScores.indexOf(loyaltyScore) + 1;
-      const loyaltyDescription = loyaltyScore >= maxLoyalty - 5 ? 'one of the most loyal'
-        : loyaltyScore <= minLoyalty + 5 ? 'one of the least loyal'
-        : loyaltyScore >= avgLoyalty + 10 ? 'more loyal than most'
-        : loyaltyScore <= avgLoyalty - 10 ? 'less loyal than most'
-        : 'about average loyalty';
+      const loyaltyPercentile = 1 - (loyaltyRank - 1) / Math.max(managers.length - 1, 1);
+      const loyaltyDescription = loyaltyPercentile >= 0.8 ? 'one of the most loyal'
+        : loyaltyPercentile >= 0.6 ? 'more loyal than most'
+        : loyaltyPercentile >= 0.4 ? 'about average loyalty'
+        : loyaltyPercentile >= 0.2 ? 'less loyal than most'
+        : 'one of the least loyal';
 
       console.log(`  🤖 Getting AI summary for ${manager.managerName}...`);
 
@@ -517,13 +525,15 @@ Focus on their player preferences and draft tendencies. Only mention loyalty if 
     for (let i = 0; i < managerStats.length; i++) {
       const { manager, topPlayers, topPositions, loyaltyScore } = managerStats[i];
       if (topPlayers.length === 0) continue;
+      if (targetSet && !targetSet.has(manager.managerId)) continue;
 
       const loyaltyRank = sortedScores.indexOf(loyaltyScore) + 1;
-      const loyaltyDescription = loyaltyScore >= maxLoyalty - 5 ? 'one of the most loyal'
-        : loyaltyScore <= minLoyalty + 5 ? 'one of the least loyal'
-        : loyaltyScore >= avgLoyalty + 10 ? 'more loyal than most'
-        : loyaltyScore <= avgLoyalty - 10 ? 'less loyal than most'
-        : 'about average loyalty';
+      const loyaltyPercentile = 1 - (loyaltyRank - 1) / Math.max(managers.length - 1, 1);
+      const loyaltyDescription = loyaltyPercentile >= 0.8 ? 'one of the most loyal'
+        : loyaltyPercentile >= 0.6 ? 'more loyal than most'
+        : loyaltyPercentile >= 0.4 ? 'about average loyalty'
+        : loyaltyPercentile >= 0.2 ? 'less loyal than most'
+        : 'one of the least loyal';
 
       const prompt = `You are a fantasy football analyst. Write 2-3 punchy sentences about this manager's tendencies:
 
@@ -670,17 +680,56 @@ app.post('/api/players/resolve', (req, res) => {
 // Cache draft results for a league season
 app.post('/api/cache/draft', (req, res) => {
   try {
-    const { leagueKey, season, picks } = req.body;
+    const { leagueKey, season, picks, trades } = req.body;
     if (!leagueKey || !season || !Array.isArray(picks)) {
       return res.status(400).json({ error: 'leagueKey, season, and picks array required' });
     }
     console.log(`📥 Caching draft data for ${season} (${leagueKey}) - ${picks.length} picks`);
     db.cacheDraftPicks(picks.map((p: any) => ({ ...p, leagueKey, season })));
+    if (Array.isArray(trades) && trades.length > 0) {
+      db.cacheDraftPickTrades(leagueKey, trades);
+      console.log(`🔄 Cached ${trades.length} traded picks for ${season}`);
+    }
     console.log(`✅ Cached ${picks.length} draft picks for ${season}`);
     res.json({ success: true, count: picks.length });
   } catch (err: any) {
     console.error('❌ Failed to cache draft data:', err);
     res.status(500).json({ error: 'Failed to cache draft data', message: err.message });
+  }
+});
+
+// Store the league chain for a root key (called after first full traversal)
+app.post('/api/cache/draft/chain', (req, res) => {
+  try {
+    const { rootKey, chain } = req.body;
+    if (!rootKey || !Array.isArray(chain)) {
+      return res.status(400).json({ error: 'rootKey and chain array required' });
+    }
+    db.storeLeagueChain(rootKey, chain);
+    console.log(`💾 Stored draft chain for ${rootKey}: ${chain.length} seasons`);
+    res.json({ success: true });
+  } catch (err: any) {
+    res.status(500).json({ error: 'Failed to store chain', message: err.message });
+  }
+});
+
+// Get full draft data for a known chain in one request (avoids Yahoo API traversal)
+app.get('/api/cache/draft/chain/:leagueKey', (req, res) => {
+  try {
+    const { leagueKey } = req.params;
+    const chain = db.getLeagueChain(leagueKey);
+    if (!chain) return res.json({ found: false });
+
+    const seasons = chain.map(({ leagueKey: lk, season }) => {
+      const picks = db.hasDraftData(lk) ? db.getDraftResultsForLeague(lk) : [];
+      const hasNames = picks.some(p => p.player_name && p.player_name.length > 0);
+      return { leagueKey: lk, season, picks, hasNames };
+    });
+
+    const allCached = seasons.every(s => s.picks.length > 0 && s.hasNames);
+    res.json({ found: true, allCached, seasons });
+  } catch (err: any) {
+    res.status(500).json({ error: 'Failed to get chain', message: err.message });
   }
 });
 

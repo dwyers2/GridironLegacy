@@ -36,10 +36,10 @@ export function cacheSeasonRosterData(data: SeasonRosterData) {
       // Cache roster entries
       const roster = data.rosters[team.teamKey] || [];
       for (const playerWrapper of roster) {
-        // Parse player data (same logic as aggregatePlayerOwnership)
         let playerInfo: any = {};
 
         if (Array.isArray(playerWrapper)) {
+          // Raw Yahoo nested format
           const firstElement = playerWrapper[0];
           if (Array.isArray(firstElement)) {
             firstElement.forEach((item: any) => {
@@ -51,15 +51,17 @@ export function cacheSeasonRosterData(data: SeasonRosterData) {
             playerInfo = firstElement;
           }
         } else if (typeof playerWrapper === 'object') {
+          // Slim pre-parsed format: { player_id, player_name, position, nfl_team }
           playerInfo = playerWrapper;
         }
 
         const playerId = playerInfo.player_id || playerInfo.player_key;
         if (!playerId) continue;
 
-        const playerName = playerInfo.name?.full || playerInfo.name || 'Unknown';
-        const position = playerInfo.display_position || playerInfo.position_type || playerInfo.primary_position || 'N/A';
-        const nflTeam = playerInfo.editorial_team_abbr || playerInfo.team_abbr || 'FA';
+        // Support both slim format (player_name) and raw Yahoo format (name.full)
+        const playerName = playerInfo.player_name || playerInfo.name?.full || playerInfo.name || 'Unknown';
+        const position = playerInfo.position || playerInfo.display_position || playerInfo.position_type || playerInfo.primary_position || 'N/A';
+        const nflTeam = playerInfo.nfl_team || playerInfo.editorial_team_abbr || playerInfo.team_abbr || 'FA';
 
         // Cache player
         db.cachePlayer(playerId, playerName, position, nflTeam);

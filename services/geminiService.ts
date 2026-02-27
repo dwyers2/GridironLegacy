@@ -29,16 +29,22 @@ export const getLegacyInsights = async (playerData: PlayerStats[]) => {
   }
 };
 
-export const getManagerTendencies = async (managerData: ManagerOwnershipData[]): Promise<ManagerTendency[]> => {
+export const getManagerTendencies = async (
+  managerData: ManagerOwnershipData[],
+  options?: { targetManagerIds?: string[] }
+): Promise<ManagerTendency[]> => {
   try {
     console.log('🤖 Requesting manager tendency analysis from Gemini...');
+
+    const body: any = { managers: managerData };
+    if (options?.targetManagerIds) body.targetManagerIds = options.targetManagerIds;
 
     const response = await fetch(`${BACKEND_URL}/api/manager-tendencies`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json'
       },
-      body: JSON.stringify({ managers: managerData })
+      body: JSON.stringify(body)
     });
 
     if (!response.ok) {

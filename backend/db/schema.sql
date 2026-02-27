@@ -79,6 +79,16 @@ CREATE INDEX IF NOT EXISTS idx_draft_picks_league ON draft_picks(league_key);
 CREATE INDEX IF NOT EXISTS idx_draft_picks_season ON draft_picks(season);
 CREATE INDEX IF NOT EXISTS idx_draft_picks_team ON draft_picks(team_key);
 
+-- Draft pick trades (records which picks were traded before the draft)
+CREATE TABLE IF NOT EXISTS draft_pick_trades (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  league_key TEXT NOT NULL,
+  pick INTEGER NOT NULL,
+  original_team_key TEXT NOT NULL,
+  UNIQUE(league_key, pick)
+);
+CREATE INDEX IF NOT EXISTS idx_pick_trades_league ON draft_pick_trades(league_key);
+
 -- AI-generated manager tendencies (cached to avoid regenerating)
 CREATE TABLE IF NOT EXISTS manager_tendencies (
   manager_id TEXT PRIMARY KEY,

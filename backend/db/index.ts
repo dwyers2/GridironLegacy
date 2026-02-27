@@ -275,10 +275,14 @@ export function getDraftResultsForLeague(leagueKey: string): Array<{
                 ELSE COALESCE(p.position, '') END as position,
            CASE WHEN dp.nfl_team != '' THEN dp.nfl_team
                 ELSE COALESCE(p.nfl_team, '') END as nfl_team,
-           COALESCE(t.manager_name, dp.team_key) as manager_name
+           COALESCE(t.manager_name, dp.team_key) as manager_name,
+           dpt.original_team_key,
+           COALESCE(t2.manager_name, dpt.original_team_key) as original_manager_name
     FROM draft_picks dp
     LEFT JOIN teams t ON dp.team_key = t.team_key
     LEFT JOIN players p ON SUBSTR(dp.player_key, INSTR(dp.player_key, '.p.') + 3) = p.player_id
+    LEFT JOIN draft_pick_trades dpt ON dp.league_key = dpt.league_key AND dp.pick = dpt.pick
+    LEFT JOIN teams t2 ON dpt.original_team_key = t2.team_key
     WHERE dp.league_key = ?
     ORDER BY dp.round, dp.pick
   `).all(leagueKey) as any[];
@@ -312,6 +316,36 @@ export function resolvePlayersByKeys(playerKeys: string[]): Array<{
       nfl_team: row?.nfl_team || '',
     };
   });
+}
+
+// Cache traded pick info for a league (which picks were acquired via trade)
+export function cacheDraftPickTrades(leagueKey: string, trades: Array<{ pick: number; originalTeamKey: string }>) {
+  if (trades.length === 0) return;
+  const stmt = db.prepare(`
+    INSERT OR REPLACE INTO draft_pick_trades (league_key, pick, original_team_key)
+    VALUES (?, ?, ?)
+  `);
+  const transaction = db.transaction(() => {
+    for (const t of trades) {
+      stmt.run(leagueKey, t.pick, t.originalTeamKey);
+    }
+  });
+  transaction();
+}
+
+// Store the ordered league chain for a root league key
+export function storeLeagueChain(rootKey: string, chain: Array<{ leagueKey: string; season: string }>) {
+  db.prepare(`
+    INSERT OR REPLACE INTO cache_metadata (key, value, last_updated)
+    VALUES (?, ?, CURRENT_TIMESTAMP)
+  `).run(`draft_chain:${rootKey}`, JSON.stringify(chain));
+}
+
+// Retrieve the stored league chain for a root league key
+export function getLeagueChain(rootKey: string): Array<{ leagueKey: string; season: string }> | null {
+  const row = db.prepare(`SELECT value FROM cache_metadata WHERE key = ?`).get(`draft_chain:${rootKey}`) as { value: string } | undefined;
+  if (!row) return null;
+  try { return JSON.parse(row.value); } catch { return null; }
 }
 
 // Transaction helper for bulk inserts

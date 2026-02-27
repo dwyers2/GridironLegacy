@@ -30,15 +30,15 @@ function DraftGrid({ season }: { season: SeasonDraftData }) {
   // Build lookup: teamKey -> draftSlot (column index 0-based)
   const teamSlot = new Map(teams.map(t => [t.teamKey, t.draftSlot - 1]));
 
-  // Build grid: grid[round][slot] = DraftPick
-  const grid: (DraftPick | null)[][] = Array.from({ length: maxRound }, () =>
-    Array(numTeams).fill(null)
+  // Build grid: grid[round][slot] = DraftPick[] (array supports traded picks landing in same round/team)
+  const grid: (DraftPick[])[][] = Array.from({ length: maxRound }, () =>
+    Array.from({ length: numTeams }, () => [] as DraftPick[])
   );
 
   for (const pick of picks) {
     const slot = teamSlot.get(pick.teamKey);
     if (slot !== undefined && pick.round >= 1 && pick.round <= maxRound) {
-      grid[pick.round - 1][slot] = pick;
+      grid[pick.round - 1][slot].push(pick);
     }
   }
 
@@ -66,26 +66,43 @@ function DraftGrid({ season }: { season: SeasonDraftData }) {
               <td className="px-4 py-2.5 text-slate-500 font-black text-xs sticky left-0 bg-[#020617]/80 z-10">
                 {roundIdx + 1}
               </td>
-              {row.map((pick, slotIdx) => (
+              {row.map((cellPicks, slotIdx) => (
                 <td key={slotIdx} className="px-3 py-2.5 align-top">
-                  {pick ? (
-                    <div className="flex flex-col gap-1">
-                      <span className="text-slate-200 font-medium text-xs leading-tight">
-                        {pick.playerName || `Pick ${pick.pick}`}
-                      </span>
-                      <div className="flex items-center gap-1">
-                        {pick.position && (
-                          <span className={`text-[9px] font-black px-1.5 py-0.5 rounded border ${positionBadgeClass(pick.position)}`}>
-                            {pick.position}
-                          </span>
-                        )}
-                        {pick.nflTeam && (
-                          <span className="text-[9px] text-slate-500 font-mono">{pick.nflTeam}</span>
-                        )}
-                      </div>
-                    </div>
-                  ) : (
+                  {cellPicks.length === 0 ? (
                     <span className="text-slate-700 text-xs">—</span>
+                  ) : (
+                    <div className="flex flex-col gap-2">
+                      {cellPicks.map((pick, i) => (
+                        <div key={i} className={`flex flex-col gap-1 ${pick.originalManagerName ? 'relative group/tradepick' : ''}`}>
+                          {pick.originalManagerName && (
+                            <>
+                              {/* Hover tooltip */}
+                              <div className="absolute z-50 hidden group-hover/tradepick:block bg-slate-900 border border-amber-500/40 rounded-lg px-3 py-2 text-xs whitespace-nowrap bottom-full left-0 mb-1.5 shadow-2xl pointer-events-none">
+                                <span className="text-slate-400">Traded from </span>
+                                <span className="text-amber-300 font-bold">{pick.originalManagerName}</span>
+                              </div>
+                              {/* Trade badge */}
+                              <span className="text-[8px] text-amber-400 font-black uppercase tracking-wider leading-none">
+                                ↑ via trade
+                              </span>
+                            </>
+                          )}
+                          <span className="text-slate-200 font-medium text-xs leading-tight">
+                            {pick.playerName || `Pick ${pick.pick}`}
+                          </span>
+                          <div className="flex items-center gap-1">
+                            {pick.position && (
+                              <span className={`text-[9px] font-black px-1.5 py-0.5 rounded border ${positionBadgeClass(pick.position)}`}>
+                                {pick.position}
+                              </span>
+                            )}
+                            {pick.nflTeam && (
+                              <span className="text-[9px] text-slate-500 font-mono">{pick.nflTeam}</span>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
                   )}
                 </td>
               ))}
