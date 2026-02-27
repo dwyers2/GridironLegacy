@@ -29,6 +29,7 @@ const App: React.FC = () => {
   const [draftData, setDraftData] = useState<SeasonDraftData[]>([]);
   const [draftLoading, setDraftLoading] = useState(false);
   const [dashboardTab, setDashboardTab] = useState<'overview' | 'draft'>('overview');
+  const [refreshingManagers, setRefreshingManagers] = useState<Set<string>>(new Set());
 
   // ✅ Prevent double-processing with ref
   const isProcessingOAuth = useRef(false);
@@ -355,6 +356,34 @@ const App: React.FC = () => {
     } finally {
       setLoading(false);
       setFetchProgress(null);
+    }
+  };
+
+  const handleRefreshTendency = async (managerId: string) => {
+    setRefreshingManagers(prev => new Set(prev).add(managerId));
+    try {
+      const newTendencies = await geminiService.getManagerTendencies(
+        managerOwnership,
+        { targetManagerIds: [managerId] }
+      );
+      const refreshed = newTendencies.find(t => t.managerId === managerId);
+      if (refreshed) {
+        const updated = managerTendencies.map(t => t.managerId === managerId ? refreshed : t);
+        setManagerTendencies(updated);
+        await fetch('http://localhost:3001/api/cache/tendencies', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ tendencies: updated })
+        });
+      }
+    } catch (err) {
+      console.error('Failed to refresh tendency:', err);
+    } finally {
+      setRefreshingManagers(prev => {
+        const next = new Set(prev);
+        next.delete(managerId);
+        return next;
+      });
     }
   };
 
@@ -749,6 +778,8 @@ const App: React.FC = () => {
               tendencies={managerTendencies}
               loading={loading}
               fetchProgress={fetchProgress}
+              onRefreshTendency={handleRefreshTendency}
+              refreshingManagers={refreshingManagers}
             />
           </div>
         );
