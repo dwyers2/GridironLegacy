@@ -3,14 +3,69 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Gridiron Legacy</title>
+    <title>Dynasty Alchemy</title>
     <script src="https://cdn.tailwindcss.com"></script>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@700;900&family=Barlow+Condensed:wght@400;600;700&family=Outfit:wght@300;400;500;600&display=swap" rel="stylesheet">
     <style>
+      :root {
+        --obsidian:      #0C0F16;
+        --surface:       #131822;
+        --surface-2:     #1A2235;
+        --border:        rgba(212, 160, 23, 0.12);
+        --border-muted:  rgba(255, 255, 255, 0.06);
+        --gold:          #D4A017;
+        --gold-bright:   #F0C040;
+        --gold-dim:      rgba(212, 160, 23, 0.08);
+        --text-primary:  #F5F0E8;
+        --text-secondary:#8A9BB5;
+        --text-muted:    #3A4A62;
+        --green:         #22A85F;
+        --red:           #E05252;
+      }
+
+      *, *::before, *::after { box-sizing: border-box; }
+
       body {
-        font-family: 'Inter', sans-serif;
-        background-color: #0f172a;
-        color: #f8fafc;
+        font-family: 'Outfit', sans-serif;
+        background-color: var(--obsidian);
+        color: var(--text-primary);
+        margin: 0;
+      }
+
+      ::selection { background: rgba(212, 160, 23, 0.25); }
+
+      ::-webkit-scrollbar { width: 6px; }
+      ::-webkit-scrollbar-track { background: var(--surface); }
+      ::-webkit-scrollbar-thumb { background: var(--text-muted); border-radius: 3px; }
+
+      @keyframes pulse-gold {
+        0%, 100% { box-shadow: 0 0 40px rgba(212,160,23,0.2); }
+        50%       { box-shadow: 0 0 70px rgba(212,160,23,0.35); }
+      }
+
+      @keyframes fade-up {
+        from { opacity: 0; transform: translateY(20px); }
+        to   { opacity: 1; transform: translateY(0); }
+      }
+
+      @keyframes spin {
+        from { transform: rotate(0deg); }
+        to   { transform: rotate(360deg); }
+      }
+
+      .animate-fade-up   { animation: fade-up 0.7s ease forwards; }
+      .animate-fade-up-2 { animation: fade-up 0.7s 0.15s ease both; }
+      .animate-fade-up-3 { animation: fade-up 0.7s 0.30s ease both; }
+      .animate-fade-up-4 { animation: fade-up 0.7s 0.45s ease both; }
+      .animate-fade-up-5 { animation: fade-up 0.7s 0.60s ease both; }
+
+      .btn-gold:hover {
+        box-shadow: 0 0 60px rgba(212,160,23,0.45) !important;
+        transform: translateY(-2px) !important;
+      }
+
+      .feature-card:hover {
+        background: var(--surface-2) !important;
       }
     </style>
   <script type="importmap">

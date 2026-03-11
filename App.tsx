@@ -4,14 +4,16 @@ import * as yahooService from './services/yahooService';
 import * as geminiService from './services/geminiService';
 import ManagerInsights from './components/ManagerInsights';
 import DraftResults from './components/DraftResults';
+import OwnerPositionGrid from './components/OwnerPositionGrid';
+import DynastyAlchemyLogo from './components/DynastyAlchemyLogo';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
   Cell, ScatterChart, Scatter, ZAxis
 } from 'recharts';
 import {
-  LayoutDashboard, History, Users, Award,
+  LayoutDashboard, Users, Award,
   ChevronRight, ArrowLeft, LogOut, Loader2, Sparkles,
-  Trophy, TrendingUp, Info, ShieldAlert, BarChart3, ClipboardList
+  Trophy, TrendingUp, Info, ShieldAlert, BarChart3, ClipboardList, Target
 } from 'lucide-react';
 
 const App: React.FC = () => {
@@ -28,7 +30,7 @@ const App: React.FC = () => {
   const [fetchProgress, setFetchProgress] = useState<FetchProgress | null>(null);
   const [draftData, setDraftData] = useState<SeasonDraftData[]>([]);
   const [draftLoading, setDraftLoading] = useState(false);
-  const [dashboardTab, setDashboardTab] = useState<'overview' | 'draft'>('overview');
+  const [dashboardTab, setDashboardTab] = useState<'overview' | 'draft' | 'ownership' | 'tendencies' | 'owner-position'>('overview');
   const [refreshingManagers, setRefreshingManagers] = useState<Set<string>>(new Set());
 
   // ✅ Prevent double-processing with ref
@@ -183,13 +185,13 @@ const App: React.FC = () => {
     }
   };
 
-  const handleViewManagerInsights = async () => {
+  const handleViewManagerInsights = async (targetTab: 'ownership' | 'tendencies' = 'ownership') => {
     if (!selectedLeague) return;
 
     setLoading(true);
     setError(null);
     setFetchProgress(null);
-    setCurrentStep(AppState.MANAGER_INSIGHTS);
+    setDashboardTab(targetTab);
 
     try {
       console.log('Loading multi-season manager ownership data...');
@@ -352,7 +354,6 @@ const App: React.FC = () => {
     } catch (err: any) {
       console.error('Failed to load manager insights:', err);
       setError(`Failed to load manager insights: ${err.message}`);
-      setCurrentStep(AppState.DASHBOARD);
     } finally {
       setLoading(false);
       setFetchProgress(null);
@@ -408,45 +409,206 @@ const App: React.FC = () => {
     switch (currentStep) {
       case AppState.LOGIN:
         return (
-          <div className="min-h-[80vh] flex flex-col items-center justify-center text-center px-4">
-            <div className="mb-8 p-6 bg-indigo-600/20 rounded-full border border-indigo-500/30 animate-pulse">
-              <History className="w-16 h-16 text-indigo-400" />
-            </div>
-            <h1 className="text-5xl font-black mb-4 tracking-tighter bg-clip-text text-transparent bg-gradient-to-r from-indigo-400 via-purple-400 to-pink-400">
-              GRIDIRON LEGACY
-            </h1>
-            <p className="text-xl text-slate-400 mb-10 max-w-lg font-light leading-relaxed">
-              Experience the definitive history of your Yahoo Fantasy Football league through the lens of advanced AI analysis.
-            </p>
-            
-            {error && (
-              <div className="mb-8 p-4 bg-red-900/30 border border-red-500/50 rounded-2xl flex items-center gap-3 text-red-200 text-sm max-w-md animate-in fade-in slide-in-from-bottom-2">
-                <ShieldAlert className="shrink-0 text-red-400" />
-                <p>{error}</p>
-              </div>
-            )}
+          <div style={{ position: 'relative', minHeight: '100vh', display: 'flex', flexDirection: 'column', overflow: 'hidden', background: 'var(--obsidian)' }}>
 
-            <button
-              onClick={handleLogin}
-              disabled={loading}
-              className="group relative flex items-center gap-3 px-10 py-5 bg-indigo-600 hover:bg-indigo-500 rounded-2xl font-bold text-xl transition-all shadow-2xl shadow-indigo-600/40 disabled:opacity-50"
+            {/* ── Atmospheric background layers ── */}
+            <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}>
+              {/* Central gold radial bloom */}
+              <div style={{
+                position: 'absolute', top: '38%', left: '50%',
+                transform: 'translate(-50%, -50%)',
+                width: '900px', height: '700px',
+                background: 'radial-gradient(ellipse at center, rgba(212,160,23,0.11) 0%, rgba(212,160,23,0.04) 45%, transparent 72%)',
+                borderRadius: '50%',
+                animation: 'pulse-gold 6s ease-in-out infinite',
+              }} />
+              {/* Subtle grid — abstracted field lines */}
+              <div style={{
+                position: 'absolute', inset: 0,
+                backgroundImage: 'linear-gradient(rgba(212,160,23,0.035) 1px, transparent 1px), linear-gradient(90deg, rgba(212,160,23,0.025) 1px, transparent 1px)',
+                backgroundSize: '64px 64px',
+              }} />
+              {/* Grain noise layer */}
+              <svg style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', opacity: 0.04 }}>
+                <filter id="grain">
+                  <feTurbulence type="fractalNoise" baseFrequency="0.75" numOctaves="4" stitchTiles="stitch" />
+                </filter>
+                <rect width="100%" height="100%" filter="url(#grain)" />
+              </svg>
+              {/* Bottom vignette */}
+              <div style={{
+                position: 'absolute', bottom: 0, left: 0, right: 0, height: '40%',
+                background: 'linear-gradient(to top, rgba(12,15,22,0.8), transparent)',
+              }} />
+            </div>
+
+            {/* ── Hero content ── */}
+            <div style={{
+              position: 'relative', zIndex: 10,
+              display: 'flex', flexDirection: 'column', alignItems: 'center',
+              justifyContent: 'center', textAlign: 'center',
+              padding: '6rem 1.5rem 4rem',
+              minHeight: '82vh',
+            }}>
+
+
+
+              {/* Wordmark */}
+              <div className="animate-fade-up-2" style={{ marginBottom: '0.5rem', lineHeight: 1 }}>
+                <div style={{
+                  fontFamily: "'Cinzel', serif",
+                  fontWeight: 900,
+                  fontSize: 'clamp(3.5rem, 11vw, 7.5rem)',
+                  letterSpacing: '0.06em',
+                  color: 'var(--text-primary)',
+                  textShadow: '0 0 100px rgba(212,160,23,0.15)',
+                }}>
+                  DYNASTY
+                </div>
+                <div style={{
+                  fontFamily: "'Cinzel', serif",
+                  fontWeight: 700,
+                  fontSize: 'clamp(1.4rem, 4.5vw, 3rem)',
+                  letterSpacing: '0.32em',
+                  color: 'var(--gold)',
+                  textShadow: '0 0 50px rgba(212,160,23,0.5)',
+                }}>
+                  ALCHEMY
+                </div>
+              </div>
+
+              {/* Gold rule divider */}
+              <div className="animate-fade-up-2" style={{ display: 'flex', alignItems: 'center', gap: '1rem', margin: '1.75rem 0', width: '260px' }}>
+                <div style={{ flex: 1, height: '1px', background: 'linear-gradient(to right, transparent, rgba(212,160,23,0.35))' }} />
+                <div style={{ width: '5px', height: '5px', background: 'var(--gold)', transform: 'rotate(45deg)', flexShrink: 0, boxShadow: '0 0 8px var(--gold)' }} />
+                <div style={{ flex: 1, height: '1px', background: 'linear-gradient(to left, transparent, rgba(212,160,23,0.35))' }} />
+              </div>
+
+              {/* Tagline */}
+              <p className="animate-fade-up-3" style={{
+                fontFamily: "'Outfit', sans-serif",
+                fontWeight: 300, fontSize: '1rem',
+                color: 'var(--text-secondary)',
+                maxWidth: '380px', lineHeight: 1.75,
+                letterSpacing: '0.015em', marginBottom: '2.5rem',
+              }}>
+                Uncover the hidden patterns of your league's history. Multi-season analytics, AI manager profiles, and the complete record of your dynasty.
+              </p>
+
+              {/* Error state */}
+              {error && (
+                <div style={{
+                  display: 'flex', alignItems: 'center', gap: '0.75rem',
+                  padding: '0.875rem 1.25rem', marginBottom: '1.5rem',
+                  background: 'rgba(220,38,38,0.08)', border: '1px solid rgba(220,38,38,0.25)',
+                  borderRadius: '8px', color: '#FCA5A5', fontSize: '0.875rem', maxWidth: '380px',
+                }}>
+                  <ShieldAlert size={18} style={{ color: '#EF4444', flexShrink: 0 }} />
+                  <p style={{ margin: 0 }}>{error}</p>
+                </div>
+              )}
+
+              {/* CTA */}
+              <button
+                onClick={handleLogin}
+                disabled={loading}
+                className="btn-gold animate-fade-up-3"
+                style={{
+                  display: 'flex', alignItems: 'center', gap: '0.75rem',
+                  padding: '1.1rem 2.75rem',
+                  background: 'linear-gradient(145deg, #D4A017 0%, #C8860A 100%)',
+                  border: '1px solid rgba(212,160,23,0.5)',
+                  borderRadius: '3px',
+                  color: '#0C0F16',
+                  fontFamily: "'Barlow Condensed', sans-serif",
+                  fontWeight: 700, fontSize: '1rem', letterSpacing: '0.18em',
+                  textTransform: 'uppercase', cursor: loading ? 'not-allowed' : 'pointer',
+                  opacity: loading ? 0.55 : 1,
+                  boxShadow: '0 0 40px rgba(212,160,23,0.2), inset 0 1px 0 rgba(255,255,255,0.18)',
+                  transition: 'all 0.25s ease',
+                }}
+              >
+                {loading ? <Loader2 size={20} style={{ animation: 'spin 1s linear infinite' }} /> : <Users size={20} />}
+                Connect Yahoo Account
+              </button>
+
+              <p className="animate-fade-up-4" style={{
+                marginTop: '1.25rem', fontSize: '0.7rem',
+                color: 'var(--text-muted)', letterSpacing: '0.07em',
+                fontFamily: "'Outfit', sans-serif",
+              }}>
+                SECURE OAUTH 2.0 &nbsp;·&nbsp; READ-ONLY &nbsp;·&nbsp; NO DATA STORED
+              </p>
+            </div>
+
+            {/* ── Feature trinity ── */}
+            <div
+              className="animate-fade-up-5"
+              style={{
+                position: 'relative', zIndex: 10,
+                maxWidth: '860px', width: '100%', margin: '0 auto',
+                padding: '0 1.5rem 6rem',
+              }}
             >
-              {loading ? <Loader2 className="animate-spin" /> : <Users size={24} className="group-hover:scale-110 transition-transform" />}
-              Connect Yahoo Account
-              <div className="absolute inset-0 bg-white/10 opacity-0 group-hover:opacity-100 rounded-2xl transition-opacity" />
-            </button>
-            <div className="mt-12 grid grid-cols-2 md:grid-cols-3 gap-8 text-slate-500">
-              <div className="flex flex-col items-center gap-2">
-                <Trophy className="text-yellow-500/50" size={24} />
-                <span className="text-xs uppercase font-bold tracking-widest">History</span>
-              </div>
-              <div className="flex flex-col items-center gap-2">
-                <Sparkles className="text-purple-500/50" size={24} />
-                <span className="text-xs uppercase font-bold tracking-widest">AI Scouter</span>
-              </div>
-              <div className="flex flex-col items-center gap-2 hidden md:flex">
-                <TrendingUp className="text-emerald-500/50" size={24} />
-                <span className="text-xs uppercase font-bold tracking-widest">Efficiency</span>
+              <div style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(auto-fit, minmax(230px, 1fr))',
+                border: '1px solid var(--border)',
+                borderRadius: '6px', overflow: 'hidden',
+                gap: '1px', background: 'var(--border)',
+              }}>
+                {[
+                  {
+                    icon: <Trophy size={26} style={{ color: 'var(--gold)' }} />,
+                    label: 'LEAGUE LEGACY',
+                    desc: 'Every season, every draft, every championship. Your complete franchise history in one place.',
+                  },
+                  {
+                    icon: <Sparkles size={26} style={{ color: 'var(--gold)' }} />,
+                    label: 'AI SCOUTING',
+                    desc: 'Gemini-powered manager profiles that expose tendencies, blind spots, and competitive archetypes.',
+                  },
+                  {
+                    icon: <TrendingUp size={26} style={{ color: 'var(--gold)' }} />,
+                    label: 'PATTERN INTEL',
+                    desc: 'Multi-season ownership maps reveal who hoards RBs, who chases upside, and who never adapts.',
+                  },
+                ].map(({ icon, label, desc }) => (
+                  <div
+                    key={label}
+                    className="feature-card"
+                    style={{
+                      padding: '2rem 1.75rem',
+                      background: 'var(--surface)',
+                      display: 'flex', flexDirection: 'column', gap: '1rem',
+                      transition: 'background 0.2s',
+                    }}
+                  >
+                    <div style={{
+                      width: '50px', height: '50px',
+                      background: 'var(--gold-dim)',
+                      border: '1px solid rgba(212,160,23,0.18)',
+                      borderRadius: '6px',
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    }}>
+                      {icon}
+                    </div>
+                    <div style={{
+                      fontFamily: "'Barlow Condensed', sans-serif",
+                      fontWeight: 700, fontSize: '0.75rem',
+                      letterSpacing: '0.2em', color: 'var(--gold)',
+                    }}>
+                      {label}
+                    </div>
+                    <p style={{
+                      fontFamily: "'Outfit', sans-serif",
+                      fontSize: '0.875rem', color: 'var(--text-secondary)',
+                      lineHeight: 1.65, fontWeight: 300, margin: 0,
+                    }}>
+                      {desc}
+                    </p>
+                  </div>
+                ))}
               </div>
             </div>
           </div>
@@ -456,38 +618,88 @@ const App: React.FC = () => {
         return (
           <div className="max-w-4xl mx-auto px-4 py-12">
             <div className="flex items-center justify-between mb-10">
-              <h2 className="text-4xl font-black tracking-tight flex items-center gap-3">
-                <LayoutDashboard className="text-indigo-400" />
+              <h2 style={{
+                fontFamily: "'Barlow Condensed', sans-serif",
+                fontWeight: 700, fontSize: '2rem', letterSpacing: '0.1em',
+                color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: '0.75rem',
+              }}>
+                <LayoutDashboard style={{ color: 'var(--gold)' }} />
                 SELECT LEAGUE
               </h2>
             </div>
-            <div className="grid gap-6">
+            <div className="grid gap-4">
               {leagues.length > 0 ? leagues.map((league) => (
                 <button
                   key={league.id}
                   onClick={() => handleSelectLeague(league)}
                   disabled={loading}
-                  className="flex items-center justify-between p-8 bg-slate-800/40 border border-slate-700 hover:border-indigo-500/50 hover:bg-slate-800/60 rounded-3xl transition-all group text-left shadow-lg"
+                  style={{
+                    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                    padding: '1.75rem 2rem',
+                    background: 'var(--surface)',
+                    border: '1px solid var(--border)',
+                    borderRadius: '8px',
+                    cursor: loading ? 'not-allowed' : 'pointer',
+                    textAlign: 'left',
+                    transition: 'border-color 0.2s, background 0.2s',
+                    opacity: loading ? 0.6 : 1,
+                  }}
+                  onMouseEnter={e => {
+                    e.currentTarget.style.borderColor = 'rgba(212,160,23,0.4)';
+                    e.currentTarget.style.background = 'var(--surface-2)';
+                  }}
+                  onMouseLeave={e => {
+                    e.currentTarget.style.borderColor = 'var(--border)';
+                    e.currentTarget.style.background = 'var(--surface)';
+                  }}
                 >
-                  <div className="flex gap-6 items-center">
-                    <div className="w-16 h-16 bg-indigo-900/30 rounded-2xl flex items-center justify-center border border-indigo-500/20 group-hover:scale-105 transition-transform">
-                       <Award className="text-indigo-400" size={32} />
+                  <div style={{ display: 'flex', gap: '1.5rem', alignItems: 'center' }}>
+                    <div style={{
+                      width: '56px', height: '56px',
+                      background: 'var(--gold-dim)',
+                      border: '1px solid rgba(212,160,23,0.2)',
+                      borderRadius: '8px',
+                      display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
+                    }}>
+                      <Award style={{ color: 'var(--gold)' }} size={28} />
                     </div>
                     <div>
-                      <h3 className="text-2xl font-bold group-hover:text-indigo-400 transition-colors">{league.name || 'Unnamed League'}</h3>
-                      <p className="text-slate-400 font-medium">NFL • {league.seasons?.join(', ') || 'N/A'}</p>
-                      <div className="flex gap-2 mt-2">
-                        <span className="text-[10px] bg-slate-700/50 text-slate-400 px-2 py-0.5 rounded-md font-mono border border-slate-600">ID: {league.id}</span>
-                        <span className="text-[10px] bg-indigo-500/10 text-indigo-400 px-2 py-0.5 rounded-md font-bold uppercase tracking-wider">Historical Data Active</span>
+                      <h3 style={{
+                        fontFamily: "'Barlow Condensed', sans-serif",
+                        fontWeight: 700, fontSize: '1.4rem', letterSpacing: '0.04em',
+                        color: 'var(--text-primary)', margin: 0,
+                      }}>{league.name || 'Unnamed League'}</h3>
+                      <p style={{ color: 'var(--text-secondary)', fontSize: '0.875rem', margin: '0.25rem 0 0.5rem', fontFamily: "'Outfit', sans-serif" }}>
+                        NFL &nbsp;·&nbsp; {league.seasons?.join(', ') || 'N/A'}
+                      </p>
+                      <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+                        <span style={{
+                          fontSize: '0.65rem', padding: '0.2rem 0.5rem',
+                          background: 'rgba(255,255,255,0.04)', border: '1px solid var(--border-muted)',
+                          borderRadius: '4px', color: 'var(--text-muted)',
+                          fontFamily: 'monospace', letterSpacing: '0.05em',
+                        }}>ID: {league.id}</span>
+                        <span style={{
+                          fontSize: '0.65rem', padding: '0.2rem 0.5rem',
+                          background: 'var(--gold-dim)', border: '1px solid rgba(212,160,23,0.2)',
+                          borderRadius: '4px', color: 'var(--gold)',
+                          fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, letterSpacing: '0.1em',
+                        }}>HISTORICAL DATA ACTIVE</span>
                       </div>
                     </div>
                   </div>
-                  <ChevronRight className="text-slate-600 group-hover:text-indigo-400 group-hover:translate-x-2 transition-all" size={32} />
+                  <ChevronRight style={{ color: 'var(--text-muted)', flexShrink: 0 }} size={24} />
                 </button>
               )) : (
-                <div className="p-16 text-center bg-slate-800/20 rounded-3xl border border-dashed border-slate-700">
-                  <Loader2 className="w-8 h-8 text-indigo-500 animate-spin mx-auto mb-4" />
-                  <p className="text-slate-400 font-medium">Looking for your active gridiron battles...</p>
+                <div style={{
+                  padding: '4rem 2rem', textAlign: 'center',
+                  background: 'var(--surface)', border: '1px dashed var(--border)',
+                  borderRadius: '8px',
+                }}>
+                  <Loader2 style={{ color: 'var(--gold)', animation: 'spin 1s linear infinite', margin: '0 auto 1rem' }} size={28} />
+                  <p style={{ color: 'var(--text-secondary)', fontFamily: "'Outfit', sans-serif", margin: 0 }}>
+                    Looking for your active gridiron battles...
+                  </p>
                 </div>
               )}
             </div>
@@ -500,101 +712,134 @@ const App: React.FC = () => {
             {/* Header */}
             <div className="flex flex-col lg:flex-row lg:items-end justify-between gap-6">
               <div>
-                <button onClick={handleBack} className="flex items-center gap-2 text-slate-400 hover:text-white mb-4 font-bold text-sm uppercase tracking-widest transition-colors">
-                  <ArrowLeft size={16} /> Back to Leagues
-                </button>
-                <h1 className="text-5xl font-black tracking-tighter text-white">{selectedLeague?.name.toUpperCase()}</h1>
-                <p className="text-indigo-400 font-bold uppercase tracking-[0.2em] text-sm flex items-center gap-2 mt-1">
-                  <div className="w-1.5 h-1.5 bg-indigo-500 rounded-full" /> Historical Legacy Dashboard
-                </p>
-              </div>
-              <div className="flex gap-4">
                 <button
-                  onClick={handleViewManagerInsights}
-                  className="group flex items-center gap-3 px-6 py-3 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 rounded-2xl font-bold transition-all shadow-xl shadow-purple-600/20"
+                  onClick={handleBack}
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: '0.5rem',
+                    color: 'var(--text-muted)', background: 'none', border: 'none', cursor: 'pointer',
+                    fontFamily: "'Barlow Condensed', sans-serif",
+                    fontWeight: 700, fontSize: '0.75rem', letterSpacing: '0.15em',
+                    textTransform: 'uppercase', transition: 'color 0.2s', marginBottom: '1rem',
+                  }}
+                  onMouseEnter={e => (e.currentTarget.style.color = 'var(--text-primary)')}
+                  onMouseLeave={e => (e.currentTarget.style.color = 'var(--text-muted)')}
                 >
-                  <BarChart3 size={20} className="group-hover:scale-110 transition-transform" />
-                  Manager Insights
+                  <ArrowLeft size={14} /> Back to Leagues
                 </button>
-                <div className="px-6 py-3 bg-slate-800/80 rounded-2xl border border-slate-700 shadow-xl backdrop-blur-sm">
-                  <span className="text-[10px] text-slate-500 block uppercase font-black tracking-widest mb-1">Status</span>
-                  <span className="text-lg font-bold text-green-400 flex items-center gap-2">
-                    Synced <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse shadow-[0_0_10px_rgba(34,197,94,0.5)]" />
-                  </span>
-                </div>
+                <h1 style={{
+                  fontFamily: "'Cinzel', serif",
+                  fontWeight: 900, fontSize: 'clamp(1.8rem, 4vw, 3rem)',
+                  letterSpacing: '0.04em', color: 'var(--text-primary)', margin: 0,
+                }}>{selectedLeague?.name.toUpperCase()}</h1>
               </div>
             </div>
 
             {/* Tab Bar */}
-            <div className="flex gap-2 border-b border-slate-700/50 pb-0">
-              <button
-                onClick={() => setDashboardTab('overview')}
-                className={`flex items-center gap-2 px-5 py-3 font-bold text-sm uppercase tracking-widest transition-all border-b-2 -mb-px ${dashboardTab === 'overview' ? 'border-indigo-500 text-indigo-400' : 'border-transparent text-slate-500 hover:text-slate-300'}`}
-              >
-                <BarChart3 size={16} />
-                Overview
-              </button>
-              <button
-                onClick={() => setDashboardTab('draft')}
-                className={`flex items-center gap-2 px-5 py-3 font-bold text-sm uppercase tracking-widest transition-all border-b-2 -mb-px ${dashboardTab === 'draft' ? 'border-indigo-500 text-indigo-400' : 'border-transparent text-slate-500 hover:text-slate-300'}`}
-              >
-                <ClipboardList size={16} />
-                Draft History
-                {draftLoading && <Loader2 size={12} className="animate-spin text-indigo-400" />}
-                {!draftLoading && draftData.length > 0 && (
-                  <span className="text-[10px] bg-indigo-500/20 text-indigo-400 px-1.5 py-0.5 rounded-full font-black border border-indigo-500/30">
-                    {draftData.length}
-                  </span>
-                )}
-              </button>
+            <div style={{ display: 'flex', gap: '0.25rem', borderBottom: '1px solid var(--border)', paddingBottom: 0 }}>
+              {([
+                { id: 'overview', icon: <BarChart3 size={15} />, label: 'Overview', onClick: () => setDashboardTab('overview') },
+                {
+                  id: 'draft', icon: <ClipboardList size={15} />, label: 'Draft History', onClick: () => setDashboardTab('draft'),
+                  badge: draftLoading
+                    ? <Loader2 size={12} style={{ animation: 'spin 1s linear infinite', color: 'var(--gold)' }} />
+                    : draftData.length > 0
+                      ? <span style={{ fontSize: '0.6rem', background: 'var(--gold-dim)', color: 'var(--gold)', padding: '0.1rem 0.4rem', borderRadius: '99px', fontWeight: 700, border: '1px solid rgba(212,160,23,0.25)' }}>{draftData.length}</span>
+                      : null,
+                },
+                { id: 'ownership', icon: <Users size={15} />, label: 'Player Ownership', onClick: () => managerOwnership.length > 0 ? setDashboardTab('ownership') : handleViewManagerInsights('ownership') },
+                { id: 'tendencies', icon: <Sparkles size={15} />, label: 'AI Tendencies', onClick: () => managerOwnership.length > 0 ? setDashboardTab('tendencies') : handleViewManagerInsights('tendencies') },
+                { id: 'owner-position', icon: <Target size={15} />, label: 'Owner Position', onClick: () => setDashboardTab('owner-position') },
+              ] as const).map(({ id, icon, label, onClick, badge }: any) => {
+                const active = dashboardTab === id;
+                return (
+                  <button
+                    key={id}
+                    onClick={onClick}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: '0.4rem',
+                      padding: '0.75rem 1.25rem',
+                      background: 'none', border: 'none', cursor: 'pointer',
+                      borderBottom: `2px solid ${active ? 'var(--gold)' : 'transparent'}`,
+                      marginBottom: '-1px',
+                      color: active ? 'var(--gold)' : 'var(--text-muted)',
+                      fontFamily: "'Barlow Condensed', sans-serif",
+                      fontWeight: 700, fontSize: '0.75rem', letterSpacing: '0.14em',
+                      textTransform: 'uppercase', transition: 'color 0.2s, border-color 0.2s',
+                    }}
+                    onMouseEnter={e => { if (!active) e.currentTarget.style.color = 'var(--text-secondary)'; }}
+                    onMouseLeave={e => { if (!active) e.currentTarget.style.color = 'var(--text-muted)'; }}
+                  >
+                    {icon}{label}{badge}
+                  </button>
+                );
+              })}
             </div>
 
             {/* Overview Tab */}
             {dashboardTab === 'overview' && (
               <>
                 {/* AI Insights Card */}
-                <div className="relative overflow-hidden bg-gradient-to-br from-indigo-600/20 via-slate-900/90 to-purple-600/20 border border-white/10 p-8 rounded-[2.5rem] shadow-2xl backdrop-blur-xl group">
-                  <div className="absolute top-0 right-0 p-8 opacity-10 group-hover:scale-110 transition-transform">
-                    <Sparkles size={120} className="text-indigo-400" />
+                <div style={{
+                  position: 'relative', overflow: 'hidden',
+                  background: 'var(--surface)',
+                  border: '1px solid var(--border)',
+                  padding: '2.5rem', borderRadius: '12px',
+                }}>
+                  {/* Background glow */}
+                  <div style={{
+                    position: 'absolute', top: '-60px', right: '-60px',
+                    width: '300px', height: '300px',
+                    background: 'radial-gradient(circle, rgba(212,160,23,0.07) 0%, transparent 70%)',
+                    pointerEvents: 'none',
+                  }} />
+                  <div style={{ position: 'absolute', top: '1.5rem', right: '1.5rem', opacity: 0.06, pointerEvents: 'none' }}>
+                    <Sparkles size={100} style={{ color: 'var(--gold)' }} />
                   </div>
-                  <div className="relative z-10">
-                    <div className="flex items-center gap-3 mb-8">
-                      <div className="p-2 bg-indigo-500/20 rounded-xl border border-indigo-500/30">
-                        <Sparkles className="text-indigo-400" size={24} />
+                  <div style={{ position: 'relative', zIndex: 1 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '2rem' }}>
+                      <div style={{
+                        padding: '0.5rem', background: 'var(--gold-dim)',
+                        border: '1px solid rgba(212,160,23,0.2)', borderRadius: '8px',
+                      }}>
+                        <Sparkles style={{ color: 'var(--gold)' }} size={20} />
                       </div>
-                      <h2 className="text-2xl font-black text-white uppercase tracking-tighter">AI Scouter's Legacy Report</h2>
+                      <h2 style={{
+                        fontFamily: "'Barlow Condensed', sans-serif",
+                        fontWeight: 700, fontSize: '1.1rem', letterSpacing: '0.14em',
+                        color: 'var(--text-primary)', margin: 0, textTransform: 'uppercase',
+                      }}>AI Scouter's Legacy Report</h2>
                     </div>
-                    <div className="grid md:grid-cols-3 gap-10">
-                      <div className="space-y-3">
-                        <div className="flex items-center gap-2">
-                          <div className="w-6 h-6 rounded-full bg-emerald-500/20 border border-emerald-500/30 flex items-center justify-center">
-                            <Trophy size={12} className="text-emerald-400" />
+                    <div className="grid md:grid-cols-3 gap-8">
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                          <div style={{ width: '22px', height: '22px', borderRadius: '50%', background: 'rgba(34,168,95,0.15)', border: '1px solid rgba(34,168,95,0.3)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                            <Trophy size={11} style={{ color: 'var(--green)' }} />
                           </div>
-                          <div className="text-xs font-black text-indigo-300 uppercase tracking-widest">Stalwart Pick</div>
+                          <div style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: '0.65rem', letterSpacing: '0.18em', color: 'var(--gold)', textTransform: 'uppercase' }}>Stalwart Pick</div>
                         </div>
-                        <p className="text-lg text-slate-200 font-medium leading-snug">{aiInsights?.frequentPick || "Analyzing rosters..."}</p>
+                        <p style={{ fontSize: '1rem', color: 'var(--text-primary)', fontFamily: "'Outfit', sans-serif", margin: 0, lineHeight: 1.5 }}>{aiInsights?.frequentPick || "Analyzing rosters..."}</p>
                       </div>
-                      <div className="space-y-3 border-l border-white/5 pl-10">
-                        <div className="flex items-center gap-2">
-                          <div className="w-6 h-6 rounded-full bg-red-500/20 border border-red-500/30 flex items-center justify-center">
-                            <TrendingUp size={12} className="text-red-400" />
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', borderLeft: '1px solid var(--border)', paddingLeft: '2rem' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                          <div style={{ width: '22px', height: '22px', borderRadius: '50%', background: 'rgba(224,82,82,0.12)', border: '1px solid rgba(224,82,82,0.3)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                            <TrendingUp size={11} style={{ color: 'var(--red)' }} />
                           </div>
-                          <div className="text-xs font-black text-indigo-300 uppercase tracking-widest">Efficiency Gap</div>
+                          <div style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: '0.65rem', letterSpacing: '0.18em', color: 'var(--gold)', textTransform: 'uppercase' }}>Efficiency Gap</div>
                         </div>
-                        <p className="text-lg text-slate-200 font-medium leading-snug">{aiInsights?.missedOpportunity || "Crunching stats..."}</p>
+                        <p style={{ fontSize: '1rem', color: 'var(--text-primary)', fontFamily: "'Outfit', sans-serif", margin: 0, lineHeight: 1.5 }}>{aiInsights?.missedOpportunity || "Crunching stats..."}</p>
                       </div>
-                      <div className="space-y-3 border-l border-white/5 pl-10">
-                        <div className="flex items-center gap-2">
-                          <div className="w-6 h-6 rounded-full bg-purple-500/20 border border-purple-500/30 flex items-center justify-center">
-                            <Award size={12} className="text-purple-400" />
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', borderLeft: '1px solid var(--border)', paddingLeft: '2rem' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                          <div style={{ width: '22px', height: '22px', borderRadius: '50%', background: 'var(--gold-dim)', border: '1px solid rgba(212,160,23,0.25)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                            <Award size={11} style={{ color: 'var(--gold)' }} />
                           </div>
-                          <div className="text-xs font-black text-indigo-300 uppercase tracking-widest">The Nemesis</div>
+                          <div style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: '0.65rem', letterSpacing: '0.18em', color: 'var(--gold)', textTransform: 'uppercase' }}>The Nemesis</div>
                         </div>
-                        <p className="text-lg text-slate-200 font-medium leading-snug">{aiInsights?.rivalJewel || "Identifying rivals..."}</p>
+                        <p style={{ fontSize: '1rem', color: 'var(--text-primary)', fontFamily: "'Outfit', sans-serif", margin: 0, lineHeight: 1.5 }}>{aiInsights?.rivalJewel || "Identifying rivals..."}</p>
                       </div>
                     </div>
-                    <div className="mt-10 pt-8 border-t border-white/5">
-                      <div className="text-2xl font-light text-indigo-100 italic leading-relaxed">
+                    <div style={{ marginTop: '2rem', paddingTop: '1.75rem', borderTop: '1px solid var(--border)' }}>
+                      <div style={{ fontSize: '1.1rem', fontWeight: 300, color: 'var(--text-secondary)', fontStyle: 'italic', lineHeight: 1.7, fontFamily: "'Outfit', sans-serif" }}>
                         "{aiInsights?.summary || "Deep-diving into league history to reveal your management identity..."}"
                       </div>
                     </div>
@@ -603,62 +848,70 @@ const App: React.FC = () => {
 
                 {/* Charts Row */}
                 <div className="grid lg:grid-cols-2 gap-8">
-                  <div className="bg-slate-800/40 border border-slate-700/50 p-8 rounded-3xl shadow-lg backdrop-blur-sm">
-                    <div className="flex items-center justify-between mb-10">
-                      <h3 className="text-2xl font-black flex items-center gap-3 tracking-tight">
-                        <div className="p-2 bg-blue-500/20 rounded-lg"><Users className="text-blue-400" size={20} /></div>
-                        OWNERSHIP DENSITY
+                  <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', padding: '2rem', borderRadius: '10px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '2rem' }}>
+                      <h3 style={{
+                        fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700,
+                        fontSize: '1rem', letterSpacing: '0.14em', color: 'var(--text-primary)',
+                        display: 'flex', alignItems: 'center', gap: '0.6rem', margin: 0, textTransform: 'uppercase',
+                      }}>
+                        <div style={{ padding: '0.4rem', background: 'var(--gold-dim)', border: '1px solid rgba(212,160,23,0.18)', borderRadius: '6px' }}>
+                          <Users style={{ color: 'var(--gold)' }} size={16} />
+                        </div>
+                        Ownership Density
                       </h3>
-                      <div className="p-1.5 hover:bg-slate-700 rounded-full cursor-help transition-colors">
-                        <Info size={18} className="text-slate-500" />
-                      </div>
+                      <Info size={16} style={{ color: 'var(--text-muted)', cursor: 'help' }} />
                     </div>
                     <div className="h-80">
                       <ResponsiveContainer width="100%" height="100%">
                         <BarChart data={playerData} layout="vertical" margin={{ left: 20 }}>
-                          <CartesianGrid strokeDasharray="3 3" stroke="#334155" horizontal={true} vertical={false} />
-                          <XAxis type="number" stroke="#64748b" axisLine={false} tickLine={false} fontSize={10} />
-                          <YAxis dataKey="name" type="category" stroke="#94a3b8" width={100} fontSize={12} fontWeight="bold" axisLine={false} tickLine={false} />
+                          <CartesianGrid strokeDasharray="3 3" stroke="rgba(212,160,23,0.08)" horizontal={true} vertical={false} />
+                          <XAxis type="number" stroke="#3A4A62" axisLine={false} tickLine={false} fontSize={10} />
+                          <YAxis dataKey="name" type="category" stroke="#8A9BB5" width={100} fontSize={11} fontWeight="600" axisLine={false} tickLine={false} />
                           <Tooltip
-                            contentStyle={{ backgroundColor: '#0f172a', border: '1px solid #334155', borderRadius: '12px', padding: '12px', boxShadow: '0 10px 15px -3px rgba(0,0,0,0.5)' }}
-                            itemStyle={{ color: '#cbd5e1', fontSize: '12px' }}
-                            cursor={{ fill: 'rgba(59, 130, 246, 0.1)' }}
+                            contentStyle={{ backgroundColor: 'var(--surface-2)', border: '1px solid rgba(212,160,23,0.2)', borderRadius: '8px', padding: '10px 14px', boxShadow: '0 8px 24px rgba(0,0,0,0.4)' }}
+                            itemStyle={{ color: 'var(--text-primary)', fontSize: '12px' }}
+                            cursor={{ fill: 'rgba(212,160,23,0.06)' }}
                           />
-                          <Legend verticalAlign="top" align="right" iconType="circle" />
-                          <Bar dataKey="ownedByMeCount" name="Your Teams" fill="#6366f1" radius={[0, 10, 10, 0]} barSize={20} />
-                          <Bar dataKey="ownedByOthersCount" name="Opponents" fill="#3b82f6" radius={[0, 10, 10, 0]} barSize={20} />
+                          <Legend verticalAlign="top" align="right" iconType="circle" wrapperStyle={{ color: 'var(--text-secondary)', fontSize: '12px' }} />
+                          <Bar dataKey="ownedByMeCount" name="Your Teams" fill="#D4A017" radius={[0, 6, 6, 0]} barSize={16} />
+                          <Bar dataKey="ownedByOthersCount" name="Opponents" fill="#3A4A62" radius={[0, 6, 6, 0]} barSize={16} />
                         </BarChart>
                       </ResponsiveContainer>
                     </div>
                   </div>
 
-                  <div className="bg-slate-800/40 border border-slate-700/50 p-8 rounded-3xl shadow-lg backdrop-blur-sm">
-                    <div className="flex items-center justify-between mb-10">
-                      <h3 className="text-2xl font-black flex items-center gap-3 tracking-tight">
-                        <div className="p-2 bg-emerald-500/20 rounded-lg"><TrendingUp className="text-emerald-400" size={20} /></div>
-                        MANAGEMENT PRECISION
+                  <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', padding: '2rem', borderRadius: '10px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '2rem' }}>
+                      <h3 style={{
+                        fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700,
+                        fontSize: '1rem', letterSpacing: '0.14em', color: 'var(--text-primary)',
+                        display: 'flex', alignItems: 'center', gap: '0.6rem', margin: 0, textTransform: 'uppercase',
+                      }}>
+                        <div style={{ padding: '0.4rem', background: 'rgba(34,168,95,0.1)', border: '1px solid rgba(34,168,95,0.2)', borderRadius: '6px' }}>
+                          <TrendingUp style={{ color: 'var(--green)' }} size={16} />
+                        </div>
+                        Management Precision
                       </h3>
-                      <div className="p-1.5 hover:bg-slate-700 rounded-full cursor-help transition-colors">
-                        <Info size={18} className="text-slate-500" />
-                      </div>
+                      <Info size={16} style={{ color: 'var(--text-muted)', cursor: 'help' }} />
                     </div>
                     <div className="h-80">
                       <ResponsiveContainer width="100%" height="100%">
                         <ScatterChart margin={{ top: 20, right: 20, bottom: 20, left: 20 }}>
-                          <CartesianGrid stroke="#334155" strokeDasharray="5 5" />
-                          <XAxis type="number" dataKey="avgPointsBenched" name="Avg Bench Pts" unit=" pts" stroke="#64748b" axisLine={false} tickLine={false} fontSize={10} label={{ value: 'Efficiency Penalty (Bench Pts)', position: 'insideBottom', offset: -10, fill: '#64748b', fontSize: 10 }} />
-                          <YAxis type="number" dataKey="avgPointsStarted" name="Avg Start Pts" unit=" pts" stroke="#64748b" axisLine={false} tickLine={false} fontSize={10} label={{ value: 'Start Success', angle: -90, position: 'insideLeft', fill: '#64748b', fontSize: 10 }} />
+                          <CartesianGrid stroke="rgba(212,160,23,0.08)" strokeDasharray="5 5" />
+                          <XAxis type="number" dataKey="avgPointsBenched" name="Avg Bench Pts" unit=" pts" stroke="#3A4A62" axisLine={false} tickLine={false} fontSize={10} label={{ value: 'Efficiency Penalty (Bench Pts)', position: 'insideBottom', offset: -10, fill: '#3A4A62', fontSize: 10 }} />
+                          <YAxis type="number" dataKey="avgPointsStarted" name="Avg Start Pts" unit=" pts" stroke="#3A4A62" axisLine={false} tickLine={false} fontSize={10} label={{ value: 'Start Success', angle: -90, position: 'insideLeft', fill: '#3A4A62', fontSize: 10 }} />
                           <ZAxis type="number" range={[100, 1000]} />
                           <Tooltip
-                            cursor={{ strokeDasharray: '3 3' }}
+                            cursor={{ strokeDasharray: '3 3', stroke: 'rgba(212,160,23,0.3)' }}
                             content={({ active, payload }) => {
                               if (active && payload && payload.length) {
                                 const data = payload[0].payload;
                                 return (
-                                  <div className="bg-slate-900 border border-slate-700 p-4 rounded-xl shadow-2xl">
-                                    <p className="font-black text-indigo-400">{data.name}</p>
-                                    <p className="text-sm text-slate-300">Started: {data.avgPointsStarted} pts</p>
-                                    <p className="text-sm text-slate-500">Benched: {data.avgPointsBenched} pts</p>
+                                  <div style={{ background: 'var(--surface-2)', border: '1px solid rgba(212,160,23,0.2)', padding: '0.75rem 1rem', borderRadius: '8px', boxShadow: '0 8px 24px rgba(0,0,0,0.4)' }}>
+                                    <p style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, color: 'var(--gold)', margin: '0 0 0.25rem', letterSpacing: '0.05em' }}>{data.name}</p>
+                                    <p style={{ fontSize: '0.8rem', color: 'var(--text-primary)', margin: '0.1rem 0', fontFamily: "'Outfit', sans-serif" }}>Started: {data.avgPointsStarted} pts</p>
+                                    <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', margin: 0, fontFamily: "'Outfit', sans-serif" }}>Benched: {data.avgPointsBenched} pts</p>
                                   </div>
                                 );
                               }
@@ -667,7 +920,7 @@ const App: React.FC = () => {
                           />
                           <Scatter name="Players" data={playerData}>
                             {playerData.map((entry, index) => (
-                              <Cell key={`cell-${index}`} fill={entry.avgPointsStarted > 20 ? '#10b981' : '#f43f5e'} stroke="white" strokeWidth={2} />
+                              <Cell key={`cell-${index}`} fill={entry.avgPointsStarted > 20 ? '#22A85F' : '#E05252'} stroke="rgba(12,15,22,0.8)" strokeWidth={2} />
                             ))}
                           </Scatter>
                         </ScatterChart>
@@ -675,87 +928,73 @@ const App: React.FC = () => {
                     </div>
                   </div>
                 </div>
-
-                {/* Detailed Player Table */}
-                <div className="bg-slate-800/20 border border-slate-700/50 rounded-[2rem] overflow-hidden shadow-2xl backdrop-blur-sm">
-                  <div className="p-8 border-b border-slate-700/50 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-                    <h3 className="text-3xl font-black flex items-center gap-4 tracking-tighter uppercase">
-                      <div className="p-3 bg-yellow-500/20 rounded-2xl"><Award className="text-yellow-400" size={24} /></div>
-                      Historical Matrix
-                    </h3>
-                  </div>
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-left">
-                      <thead className="bg-slate-900/50 text-slate-500 text-[10px] uppercase font-black tracking-[0.2em]">
-                        <tr>
-                          <th className="px-10 py-6">Player Identity</th>
-                          <th className="px-6 py-6 text-center">Legacy Loyalty</th>
-                          <th className="px-6 py-6 text-center">Scoring Power</th>
-                          <th className="px-6 py-6 text-center">Bench Impact</th>
-                          <th className="px-10 py-6">Decision Efficiency</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-800">
-                        {playerData.map((player) => {
-                          const avgStarted = player.avgPointsStarted ?? 0;
-                          const avgBenched = player.avgPointsBenched ?? 0;
-                          const efficiency = avgStarted > 0
-                            ? (avgStarted / (avgStarted + avgBenched) * 100).toFixed(0)
-                            : "0";
-                          return (
-                            <tr key={player.id} className="hover:bg-indigo-500/5 transition-all duration-300 group">
-                              <td className="px-10 py-8">
-                                <div className="flex items-center gap-4">
-                                  <div className="w-12 h-12 bg-slate-700/50 rounded-xl flex items-center justify-center font-black text-lg group-hover:bg-indigo-500/20 group-hover:text-indigo-400 transition-colors">
-                                    {player.name ? player.name.split(' ').map(n => n[0]).join('') : '??'}
-                                  </div>
-                                  <div>
-                                    <div className="font-black text-lg text-white group-hover:text-indigo-100">{player.name || 'Unknown Player'}</div>
-                                    <div className="text-xs text-slate-500 font-bold uppercase tracking-wider">{player.position || 'N/A'} • {player.team || 'FA'}</div>
-                                  </div>
-                                </div>
-                              </td>
-                              <td className="px-6 py-8 text-center">
-                                <div className="inline-block px-3 py-1 bg-slate-800 border border-slate-700 rounded-lg text-sm font-black text-indigo-400">
-                                  {player.ownedByMeCount ?? 0} SEASONS
-                                </div>
-                              </td>
-                              <td className="px-6 py-8 text-center font-black text-xl text-emerald-400">{avgStarted.toFixed(1)}</td>
-                              <td className="px-6 py-8 text-center font-black text-xl text-red-500/70">{avgBenched.toFixed(1)}</td>
-                              <td className="px-10 py-8">
-                                <div className="flex items-center gap-4">
-                                  <div className="flex-1 bg-slate-700/50 rounded-full h-3 p-0.5">
-                                    <div
-                                      className={`h-full rounded-full transition-all duration-1000 shadow-[0_0_10px_rgba(0,0,0,0.3)] ${Number(efficiency) > 75 ? 'bg-gradient-to-r from-emerald-600 to-emerald-400' : 'bg-gradient-to-r from-orange-600 to-orange-400'}`}
-                                      style={{ width: `${efficiency}%` }}
-                                    />
-                                  </div>
-                                  <span className="text-sm font-black text-white w-10">{efficiency}%</span>
-                                </div>
-                              </td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
+                
               </>
             )}
 
             {/* Draft History Tab */}
             {dashboardTab === 'draft' && (
               <div className="pt-2">
-                <div className="flex items-center gap-4 mb-6">
-                  <div className="p-3 bg-indigo-500/20 rounded-2xl border border-indigo-500/20">
-                    <ClipboardList className="text-indigo-400" size={24} />
+                <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', marginBottom: '1.5rem' }}>
+                  <div style={{ padding: '0.75rem', background: 'var(--gold-dim)', border: '1px solid rgba(212,160,23,0.2)', borderRadius: '8px' }}>
+                    <ClipboardList style={{ color: 'var(--gold)' }} size={22} />
                   </div>
                   <div>
-                    <h2 className="text-3xl font-black tracking-tighter uppercase text-white">Draft History</h2>
-                    <p className="text-slate-500 text-sm font-medium mt-0.5">All-time draft results — expand a year to view the grid</p>
+                    <h2 style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: '1.6rem', letterSpacing: '0.08em', color: 'var(--text-primary)', margin: 0, textTransform: 'uppercase' }}>Draft History</h2>
+                    <p style={{ color: 'var(--text-secondary)', fontSize: '0.8rem', margin: '0.2rem 0 0', fontFamily: "'Outfit', sans-serif" }}>All-time draft results — expand a year to view the grid</p>
                   </div>
                 </div>
                 <DraftResults draftSeasons={draftData} loading={draftLoading} />
+              </div>
+            )}
+
+            {/* Player Ownership Tab */}
+            {dashboardTab === 'ownership' && (
+              <div className="pt-2">
+                <ManagerInsights
+                  ownershipData={managerOwnership}
+                  tendencies={managerTendencies}
+                  loading={loading}
+                  fetchProgress={fetchProgress}
+                  onRefreshTendency={handleRefreshTendency}
+                  refreshingManagers={refreshingManagers}
+                  tab="ownership"
+                />
+              </div>
+            )}
+
+            {/* AI Tendencies Tab */}
+            {dashboardTab === 'tendencies' && (
+              <div className="pt-2">
+                <ManagerInsights
+                  ownershipData={managerOwnership}
+                  tendencies={managerTendencies}
+                  loading={loading}
+                  fetchProgress={fetchProgress}
+                  onRefreshTendency={handleRefreshTendency}
+                  refreshingManagers={refreshingManagers}
+                  tab="tendencies"
+                />
+              </div>
+            )}
+
+            {/* Owner Position Tab */}
+            {dashboardTab === 'owner-position' && (
+              <div className="pt-2">
+                <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', marginBottom: '1.5rem' }}>
+                  <div style={{ padding: '0.75rem', background: 'var(--gold-dim)', border: '1px solid rgba(212,160,23,0.2)', borderRadius: '8px' }}>
+                    <Target style={{ color: 'var(--gold)' }} size={22} />
+                  </div>
+                  <div>
+                    <h2 style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: '1.6rem', letterSpacing: '0.08em', color: 'var(--text-primary)', margin: 0, textTransform: 'uppercase' }}>
+                      Owner Position Map
+                    </h2>
+                    <p style={{ color: 'var(--text-secondary)', fontSize: '0.8rem', margin: '0.2rem 0 0', fontFamily: "'Outfit', sans-serif" }}>
+                      What position each manager drafted in every round, across all seasons
+                    </p>
+                  </div>
+                </div>
+                <OwnerPositionGrid draftSeasons={draftData} loading={draftLoading} />
               </div>
             )}
           </div>
@@ -770,8 +1009,19 @@ const App: React.FC = () => {
         });
         return (
           <div className="max-w-7xl mx-auto px-4 py-8">
-            <button onClick={handleBack} className="flex items-center gap-2 text-slate-400 hover:text-white mb-6 font-bold text-sm uppercase tracking-widest transition-colors">
-              <ArrowLeft size={16} /> Back to Dashboard
+            <button
+              onClick={handleBack}
+              style={{
+                display: 'flex', alignItems: 'center', gap: '0.5rem',
+                color: 'var(--text-muted)', background: 'none', border: 'none', cursor: 'pointer',
+                fontFamily: "'Barlow Condensed', sans-serif",
+                fontWeight: 700, fontSize: '0.75rem', letterSpacing: '0.15em',
+                textTransform: 'uppercase', transition: 'color 0.2s', marginBottom: '1.5rem',
+              }}
+              onMouseEnter={e => (e.currentTarget.style.color = 'var(--text-primary)')}
+              onMouseLeave={e => (e.currentTarget.style.color = 'var(--text-muted)')}
+            >
+              <ArrowLeft size={14} /> Back to Dashboard
             </button>
             <ManagerInsights
               ownershipData={managerOwnership}
@@ -787,53 +1037,102 @@ const App: React.FC = () => {
   };
 
   return (
-    <div className="min-h-screen bg-[#020617] text-slate-200 font-sans selection:bg-indigo-500/30">
-      <nav className="border-b border-white/5 bg-[#020617]/80 backdrop-blur-xl sticky top-0 z-50">
-        <div className="max-w-7xl mx-auto px-6 h-20 flex items-center justify-between">
-          <div className="flex items-center gap-3 cursor-pointer group" onClick={() => setCurrentStep(AppState.LOGIN)}>
-            <div className="bg-gradient-to-br from-indigo-600 to-purple-700 p-2.5 rounded-2xl shadow-2xl shadow-indigo-600/20 group-hover:scale-110 transition-transform">
-              <History className="text-white" size={24} />
-            </div>
-            <span className="font-black text-2xl tracking-tighter text-white group-hover:text-indigo-400 transition-colors">GRIDIRON LEGACY</span>
+    <div style={{ minHeight: '100vh', background: 'var(--obsidian)', color: 'var(--text-primary)' }}>
+      {currentStep !== AppState.LOGIN && <nav style={{
+        borderBottom: '1px solid var(--border)',
+        background: 'rgba(12,15,22,0.9)',
+        backdropFilter: 'blur(20px)',
+        WebkitBackdropFilter: 'blur(20px)',
+        position: 'sticky',
+        top: 0,
+        zIndex: 50,
+      }}>
+        <div className="max-w-7xl mx-auto px-6" style={{ height: '72px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <div
+            className="cursor-pointer"
+            onClick={() => setCurrentStep(AppState.LOGIN)}
+            style={{ opacity: 0.9, transition: 'opacity 0.2s' }}
+            onMouseEnter={e => (e.currentTarget.style.opacity = '1')}
+            onMouseLeave={e => (e.currentTarget.style.opacity = '0.9')}
+          >
+            <DynastyAlchemyLogo size={44} withText />
           </div>
-          
+
           {currentStep !== AppState.LOGIN && (
-            <div className="flex items-center gap-6">
-               <button 
-                onClick={handleLogout}
-                className="group flex items-center gap-2 text-slate-500 hover:text-white transition-colors font-black text-xs uppercase tracking-widest"
-              >
-                <LogOut size={18} className="group-hover:translate-x-1 transition-transform" />
-                Disconnect
-              </button>
-            </div>
+            <button
+              onClick={handleLogout}
+              style={{
+                display: 'flex', alignItems: 'center', gap: '0.5rem',
+                background: 'none', border: 'none', cursor: 'pointer',
+                color: 'var(--text-muted)',
+                fontFamily: "'Barlow Condensed', sans-serif",
+                fontWeight: 700, fontSize: '0.75rem', letterSpacing: '0.15em',
+                textTransform: 'uppercase', transition: 'color 0.2s',
+              }}
+              onMouseEnter={e => (e.currentTarget.style.color = 'var(--text-primary)')}
+              onMouseLeave={e => (e.currentTarget.style.color = 'var(--text-muted)')}
+            >
+              <LogOut size={16} />
+              Disconnect
+            </button>
           )}
         </div>
-      </nav>
+      </nav>}
 
       <main>
         {loading && currentStep === AppState.LOGIN && (
-          <div className="fixed inset-0 bg-[#020617]/80 backdrop-blur-md z-[100] flex flex-col items-center justify-center animate-in fade-in">
-            <div className="relative">
-              <div className="w-20 h-20 border-4 border-indigo-500/20 border-t-indigo-500 rounded-full animate-spin" />
-              <History className="absolute inset-0 m-auto text-indigo-500 animate-pulse" size={32} />
+          <div style={{
+            position: 'fixed', inset: 0,
+            background: 'rgba(12,15,22,0.95)',
+            backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)',
+            zIndex: 100,
+            display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+          }}>
+            <div style={{ marginBottom: '1.5rem', filter: 'drop-shadow(0 0 40px rgba(212,160,23,0.3))' }}>
+              <DynastyAlchemyLogo size={80} />
             </div>
-            <p className="text-2xl font-black mt-8 tracking-tighter text-white uppercase italic">Contacting League Central...</p>
-            <p className="text-slate-500 mt-2 font-medium">Securing OAuth 2.0 Handshake</p>
+            <p style={{
+              fontFamily: "'Cinzel', serif", fontWeight: 700,
+              fontSize: '1.25rem', letterSpacing: '0.06em',
+              color: 'var(--text-primary)', marginTop: '1rem', textTransform: 'uppercase',
+            }}>Contacting League Central...</p>
+            <p style={{ color: 'var(--text-secondary)', marginTop: '0.5rem', fontFamily: "'Outfit', sans-serif", fontSize: '0.875rem' }}>
+              Securing OAuth 2.0 Handshake
+            </p>
           </div>
         )}
         {renderContent()}
       </main>
 
-      <footer className="border-t border-white/5 py-12 bg-slate-900/20 mt-20">
-        <div className="max-w-7xl mx-auto px-6 flex flex-col md:flex-row justify-between items-center gap-8">
-          <div className="text-slate-500 text-xs font-bold uppercase tracking-[0.2em]">
-            © 2024 GRIDIRON LEGACY • BUILT WITH SECURE PROXY ARCHITECTURE
+      <footer style={{ borderTop: '1px solid var(--border)', padding: '3rem 0', background: 'var(--surface)', marginTop: '5rem' }}>
+        <div className="max-w-7xl mx-auto px-6" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '1.25rem' }}>
+          <div style={{
+            fontFamily: "'Barlow Condensed', sans-serif",
+            fontSize: '0.7rem', letterSpacing: '0.2em',
+            color: 'var(--text-muted)', textAlign: 'center', textTransform: 'uppercase',
+          }}>
+            © 2025 Dynasty Alchemy &nbsp;·&nbsp; Built with Secure Proxy Architecture
           </div>
-          <div className="flex gap-8">
-            <a href="https://developer.yahoo.com/fantasysports/guide/" target="_blank" className="text-xs font-black uppercase tracking-widest text-slate-600 hover:text-indigo-400 transition-colors">Yahoo API</a>
-            <a href="#" className="text-xs font-black uppercase tracking-widest text-slate-600 hover:text-indigo-400 transition-colors">Security</a>
-            <a href="#" className="text-xs font-black uppercase tracking-widest text-slate-600 hover:text-indigo-400 transition-colors">Privacy</a>
+          <div style={{ display: 'flex', gap: '2.5rem' }}>
+            {[
+              { label: 'Yahoo API', href: 'https://developer.yahoo.com/fantasysports/guide/' },
+              { label: 'Security', href: '#' },
+              { label: 'Privacy', href: '#' },
+            ].map(({ label, href }) => (
+              <a
+                key={label}
+                href={href}
+                target={href.startsWith('http') ? '_blank' : undefined}
+                style={{
+                  fontFamily: "'Barlow Condensed', sans-serif",
+                  fontWeight: 700, fontSize: '0.7rem', letterSpacing: '0.18em',
+                  color: 'var(--text-muted)', textDecoration: 'none', transition: 'color 0.2s',
+                  textTransform: 'uppercase',
+                }}
+                onMouseEnter={e => (e.currentTarget.style.color = 'var(--gold)')}
+                onMouseLeave={e => (e.currentTarget.style.color = 'var(--text-muted)')}
+              >{label}</a>
+            ))}
           </div>
         </div>
       </footer>

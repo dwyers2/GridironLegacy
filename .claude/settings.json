@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "sqlite": {
+      "command": "C:\\Users\\dwyer\\AppData\\Local\\Programs\\Python\\Python313\\Scripts\\mcp-server-sqlite.exe",
+      "args": [
+        "--db-path",
+        "C:\\Users\\dwyer\\projects\\GridironLegacy\\backend\\db\\gridiron_legacy.db"
+      ]
+    }
+  }
+}

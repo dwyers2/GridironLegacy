@@ -7,30 +7,31 @@ interface Props {
   loading: boolean;
 }
 
-const POSITION_COLORS: Record<string, string> = {
-  QB: 'bg-red-500/20 text-red-300 border-red-500/30',
-  RB: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30',
-  WR: 'bg-blue-500/20 text-blue-300 border-blue-500/30',
-  TE: 'bg-yellow-500/20 text-yellow-300 border-yellow-500/30',
-  K:  'bg-purple-500/20 text-purple-300 border-purple-500/30',
-  DEF:'bg-slate-500/20 text-slate-300 border-slate-500/30',
+const POSITION_STYLES: Record<string, React.CSSProperties> = {
+  QB:  { background: 'rgba(239,68,68,0.12)',  color: '#F87171', border: '1px solid rgba(239,68,68,0.28)' },
+  RB:  { background: 'rgba(34,197,94,0.12)',  color: '#4ADE80', border: '1px solid rgba(34,197,94,0.28)' },
+  WR:  { background: 'rgba(59,130,246,0.12)', color: '#60A5FA', border: '1px solid rgba(59,130,246,0.28)' },
+  TE:  { background: 'rgba(212,160,23,0.12)', color: '#D4A017', border: '1px solid rgba(212,160,23,0.3)' },
+  K:   { background: 'rgba(168,85,247,0.12)', color: '#C084FC', border: '1px solid rgba(168,85,247,0.28)' },
+  DEF: { background: 'rgba(100,116,139,0.12)',color: '#94A3B8', border: '1px solid rgba(100,116,139,0.28)' },
 };
 
-function positionBadgeClass(position: string): string {
-  return POSITION_COLORS[position] || 'bg-slate-600/20 text-slate-400 border-slate-600/30';
+function positionBadgeStyle(position: string): React.CSSProperties {
+  return POSITION_STYLES[position] || { background: 'rgba(100,116,139,0.1)', color: '#94A3B8', border: '1px solid rgba(100,116,139,0.2)' };
 }
 
 function DraftGrid({ season }: { season: SeasonDraftData }) {
   const { picks, teams } = season;
-  if (picks.length === 0) return <p className="text-slate-500 italic p-6">No draft data available for this season.</p>;
+  if (picks.length === 0) return (
+    <p style={{ color: 'var(--text-secondary)', fontStyle: 'italic', padding: '1.5rem', fontFamily: "'Outfit', sans-serif", margin: 0 }}>
+      No draft data available for this season.
+    </p>
+  );
 
   const numTeams = teams.length;
   const maxRound = Math.max(...picks.map(p => p.round));
-
-  // Build lookup: teamKey -> draftSlot (column index 0-based)
   const teamSlot = new Map(teams.map(t => [t.teamKey, t.draftSlot - 1]));
 
-  // Build grid: grid[round][slot] = DraftPick[] (array supports traded picks landing in same round/team)
   const grid: (DraftPick[])[][] = Array.from({ length: maxRound }, () =>
     Array.from({ length: numTeams }, () => [] as DraftPick[])
   );
@@ -43,18 +44,29 @@ function DraftGrid({ season }: { season: SeasonDraftData }) {
   }
 
   return (
-    <div className="overflow-x-auto">
-      <table className="w-full text-left border-collapse text-sm min-w-max">
+    <div style={{ overflowX: 'auto' }}>
+      <table style={{ width: '100%', textAlign: 'left', borderCollapse: 'collapse', fontSize: '0.8rem', minWidth: 'max-content' }}>
         <thead>
-          <tr className="bg-slate-900/60">
-            <th className="px-4 py-3 text-slate-500 font-black text-[10px] uppercase tracking-widest border-b border-slate-700/50 sticky left-0 bg-slate-900/90 z-10 min-w-[72px]">
+          <tr style={{ background: 'var(--surface)' }}>
+            <th style={{
+              padding: '0.75rem 1rem',
+              color: 'var(--text-muted)',
+              fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700,
+              fontSize: '0.65rem', letterSpacing: '0.18em', textTransform: 'uppercase',
+              borderBottom: '1px solid var(--border)',
+              position: 'sticky', left: 0, background: 'var(--surface)', zIndex: 10, minWidth: '72px',
+            }}>
               Round
             </th>
             {teams.map(team => (
-              <th
-                key={team.teamKey}
-                className="px-3 py-3 text-indigo-300 font-bold text-[11px] border-b border-slate-700/50 whitespace-nowrap min-w-[130px] max-w-[160px]"
-              >
+              <th key={team.teamKey} style={{
+                padding: '0.75rem',
+                color: 'var(--gold)',
+                fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700,
+                fontSize: '0.7rem', letterSpacing: '0.06em',
+                borderBottom: '1px solid var(--border)',
+                whiteSpace: 'nowrap', minWidth: '130px', maxWidth: '160px',
+              }}>
                 {team.managerName}
               </th>
             ))}
@@ -62,42 +74,76 @@ function DraftGrid({ season }: { season: SeasonDraftData }) {
         </thead>
         <tbody>
           {grid.map((row, roundIdx) => (
-            <tr key={roundIdx} className="border-b border-slate-800/50 hover:bg-slate-800/20 transition-colors">
-              <td className="px-4 py-2.5 text-slate-500 font-black text-xs sticky left-0 bg-[#020617]/80 z-10">
+            <tr
+              key={roundIdx}
+              style={{ borderBottom: '1px solid var(--border)', transition: 'background 0.15s' }}
+              onMouseEnter={e => (e.currentTarget.style.background = 'rgba(212,160,23,0.03)')}
+              onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
+            >
+              <td style={{
+                padding: '0.6rem 1rem',
+                color: 'var(--text-muted)',
+                fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700,
+                fontSize: '0.75rem', letterSpacing: '0.1em',
+                position: 'sticky', left: 0, background: 'var(--surface-2)', zIndex: 10,
+              }}>
                 {roundIdx + 1}
               </td>
               {row.map((cellPicks, slotIdx) => (
-                <td key={slotIdx} className="px-3 py-2.5 align-top">
+                <td key={slotIdx} style={{ padding: '0.6rem 0.75rem', verticalAlign: 'top' }}>
                   {cellPicks.length === 0 ? (
-                    <span className="text-slate-700 text-xs">—</span>
+                    <span style={{ color: 'var(--text-muted)', fontSize: '0.75rem' }}>—</span>
                   ) : (
-                    <div className="flex flex-col gap-2">
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
                       {cellPicks.map((pick, i) => (
-                        <div key={i} className={`flex flex-col gap-1 ${pick.originalManagerName ? 'relative group/tradepick' : ''}`}>
+                        <div
+                          key={i}
+                          style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem', position: 'relative' }}
+                          className={pick.originalManagerName ? 'group/tradepick' : ''}
+                        >
                           {pick.originalManagerName && (
                             <>
-                              {/* Hover tooltip */}
-                              <div className="absolute z-50 hidden group-hover/tradepick:block bg-slate-900 border border-amber-500/40 rounded-lg px-3 py-2 text-xs whitespace-nowrap bottom-full left-0 mb-1.5 shadow-2xl pointer-events-none">
-                                <span className="text-slate-400">Traded from </span>
-                                <span className="text-amber-300 font-bold">{pick.originalManagerName}</span>
+                              <div style={{
+                                position: 'absolute', zIndex: 50,
+                                background: 'var(--surface-2)',
+                                border: '1px solid rgba(212,160,23,0.3)',
+                                borderRadius: '6px', padding: '0.4rem 0.75rem',
+                                fontSize: '0.75rem', whiteSpace: 'nowrap',
+                                bottom: '100%', left: 0, marginBottom: '0.375rem',
+                                boxShadow: '0 4px 16px rgba(0,0,0,0.5)',
+                                pointerEvents: 'none',
+                              }} className="hidden group-hover/tradepick:block">
+                                <span style={{ color: 'var(--text-secondary)' }}>Traded from </span>
+                                <span style={{ color: 'var(--gold)', fontWeight: 700 }}>{pick.originalManagerName}</span>
                               </div>
-                              {/* Trade badge */}
-                              <span className="text-[8px] text-amber-400 font-black uppercase tracking-wider leading-none">
-                                ↑ via trade
-                              </span>
+                              <span style={{
+                                fontSize: '0.55rem', color: '#F0C040',
+                                fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.1em',
+                              }}>↑ via trade</span>
                             </>
                           )}
-                          <span className="text-slate-200 font-medium text-xs leading-tight">
+                          <span style={{
+                            color: 'var(--text-primary)',
+                            fontFamily: "'Outfit', sans-serif",
+                            fontSize: '0.8rem', lineHeight: 1.3, fontWeight: 500,
+                          }}>
                             {pick.playerName || `Pick ${pick.pick}`}
                           </span>
-                          <div className="flex items-center gap-1">
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
                             {pick.position && (
-                              <span className={`text-[9px] font-black px-1.5 py-0.5 rounded border ${positionBadgeClass(pick.position)}`}>
+                              <span style={{
+                                fontSize: '0.6rem', fontWeight: 700,
+                                padding: '0.1rem 0.35rem', borderRadius: '3px',
+                                fontFamily: "'Barlow Condensed', sans-serif", letterSpacing: '0.06em',
+                                ...positionBadgeStyle(pick.position),
+                              }}>
                                 {pick.position}
                               </span>
                             )}
                             {pick.nflTeam && (
-                              <span className="text-[9px] text-slate-500 font-mono">{pick.nflTeam}</span>
+                              <span style={{ fontSize: '0.6rem', color: 'var(--text-muted)', fontFamily: 'monospace' }}>
+                                {pick.nflTeam}
+                              </span>
                             )}
                           </div>
                         </div>
@@ -116,7 +162,6 @@ function DraftGrid({ season }: { season: SeasonDraftData }) {
 
 export default function DraftResults({ draftSeasons, loading }: Props) {
   const [expanded, setExpanded] = useState<Set<string>>(
-    // Auto-expand the most recent season
     new Set(draftSeasons.length > 0 ? [draftSeasons[0].season] : [])
   );
 
@@ -131,29 +176,48 @@ export default function DraftResults({ draftSeasons, loading }: Props) {
 
   if (loading && draftSeasons.length === 0) {
     return (
-      <div className="flex flex-col items-center justify-center py-24 text-slate-500 gap-4">
-        <Loader2 className="animate-spin w-10 h-10 text-indigo-500" />
-        <p className="font-bold uppercase tracking-widest text-sm">Loading draft history...</p>
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '6rem 2rem', gap: '1rem' }}>
+        <Loader2 style={{ animation: 'spin 1s linear infinite', color: 'var(--gold)' }} size={36} />
+        <p style={{
+          fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700,
+          fontSize: '0.75rem', letterSpacing: '0.18em',
+          color: 'var(--text-muted)', textTransform: 'uppercase', margin: 0,
+        }}>
+          Loading draft history...
+        </p>
       </div>
     );
   }
 
   if (!loading && draftSeasons.length === 0) {
     return (
-      <div className="flex flex-col items-center justify-center py-24 text-slate-600 gap-4">
-        <ClipboardList className="w-12 h-12 opacity-40" />
-        <p className="font-bold uppercase tracking-widest text-sm">No draft data found</p>
-        <p className="text-xs text-slate-700 max-w-xs text-center">Draft results may not be available for this league, or data is still loading.</p>
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '6rem 2rem', gap: '1rem' }}>
+        <ClipboardList style={{ color: 'var(--text-muted)', opacity: 0.3 }} size={44} />
+        <p style={{
+          fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700,
+          fontSize: '0.75rem', letterSpacing: '0.18em',
+          color: 'var(--text-muted)', textTransform: 'uppercase', margin: 0,
+        }}>
+          No draft data found
+        </p>
+        <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', maxWidth: '280px', textAlign: 'center', fontFamily: "'Outfit', sans-serif", margin: 0 }}>
+          Draft results may not be available for this league, or data is still loading.
+        </p>
       </div>
     );
   }
 
   return (
-    <div className="space-y-4">
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
       {loading && (
-        <div className="flex items-center gap-3 text-indigo-400 text-sm font-bold px-2 pb-2">
-          <Loader2 className="animate-spin w-4 h-4" />
-          <span>Fetching draft history in background...</span>
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: '0.75rem',
+          color: 'var(--gold)', fontSize: '0.75rem',
+          fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, letterSpacing: '0.12em',
+          padding: '0 0.5rem 0.5rem',
+        }}>
+          <Loader2 style={{ animation: 'spin 1s linear infinite' }} size={14} />
+          <span>FETCHING DRAFT HISTORY IN BACKGROUND...</span>
         </div>
       )}
 
@@ -166,34 +230,62 @@ export default function DraftResults({ draftSeasons, loading }: Props) {
         return (
           <div
             key={season.season}
-            className="bg-slate-800/30 border border-slate-700/50 rounded-2xl overflow-hidden"
+            style={{
+              background: 'var(--surface)',
+              border: `1px solid ${isOpen ? 'rgba(212,160,23,0.22)' : 'var(--border)'}`,
+              borderRadius: '8px', overflow: 'hidden',
+              transition: 'border-color 0.2s',
+            }}
           >
             <button
-              className="w-full flex items-center justify-between px-6 py-5 hover:bg-slate-800/50 transition-colors group"
+              style={{
+                width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                padding: '1.25rem 1.5rem',
+                background: 'none', border: 'none', cursor: 'pointer',
+                transition: 'background 0.15s',
+              }}
+              onMouseEnter={e => (e.currentTarget.style.background = 'var(--surface-2)')}
+              onMouseLeave={e => (e.currentTarget.style.background = 'none')}
               onClick={() => toggle(season.season)}
             >
-              <div className="flex items-center gap-4">
-                <span className="text-2xl font-black text-white tracking-tight">{season.season}</span>
-                <div className="flex gap-2">
-                  <span className="text-[10px] font-black uppercase tracking-widest px-2 py-1 rounded-lg bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">
-                    {numTeams} teams
-                  </span>
-                  <span className="text-[10px] font-black uppercase tracking-widest px-2 py-1 rounded-lg bg-slate-700/50 text-slate-400 border border-slate-600/30">
-                    {numRounds} rounds
-                  </span>
-                  <span className="text-[10px] font-black uppercase tracking-widest px-2 py-1 rounded-lg bg-slate-700/50 text-slate-400 border border-slate-600/30">
-                    {numPicks} picks
-                  </span>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+                <span style={{
+                  fontFamily: "'Cinzel', serif", fontWeight: 900, fontSize: '1.5rem',
+                  letterSpacing: '0.04em',
+                  color: isOpen ? 'var(--gold)' : 'var(--text-primary)',
+                  transition: 'color 0.2s',
+                }}>
+                  {season.season}
+                </span>
+                <div style={{ display: 'flex', gap: '0.4rem' }}>
+                  <span style={{
+                    fontSize: '0.6rem', fontWeight: 700, padding: '0.2rem 0.5rem',
+                    background: 'var(--gold-dim)', border: '1px solid rgba(212,160,23,0.2)',
+                    borderRadius: '4px', color: 'var(--gold)',
+                    fontFamily: "'Barlow Condensed', sans-serif", letterSpacing: '0.12em', textTransform: 'uppercase',
+                  }}>{numTeams} teams</span>
+                  <span style={{
+                    fontSize: '0.6rem', fontWeight: 700, padding: '0.2rem 0.5rem',
+                    background: 'rgba(255,255,255,0.04)', border: '1px solid var(--border-muted)',
+                    borderRadius: '4px', color: 'var(--text-muted)',
+                    fontFamily: "'Barlow Condensed', sans-serif", letterSpacing: '0.12em', textTransform: 'uppercase',
+                  }}>{numRounds} rounds</span>
+                  <span style={{
+                    fontSize: '0.6rem', fontWeight: 700, padding: '0.2rem 0.5rem',
+                    background: 'rgba(255,255,255,0.04)', border: '1px solid var(--border-muted)',
+                    borderRadius: '4px', color: 'var(--text-muted)',
+                    fontFamily: "'Barlow Condensed', sans-serif", letterSpacing: '0.12em', textTransform: 'uppercase',
+                  }}>{numPicks} picks</span>
                 </div>
               </div>
               {isOpen
-                ? <ChevronDown className="text-indigo-400 group-hover:scale-110 transition-transform" size={20} />
-                : <ChevronRight className="text-slate-500 group-hover:text-indigo-400 group-hover:translate-x-1 transition-all" size={20} />
+                ? <ChevronDown style={{ color: 'var(--gold)' }} size={18} />
+                : <ChevronRight style={{ color: 'var(--text-muted)' }} size={18} />
               }
             </button>
 
             {isOpen && (
-              <div className="border-t border-slate-700/50">
+              <div style={{ borderTop: '1px solid var(--border)', background: 'var(--surface-2)' }}>
                 <DraftGrid season={season} />
               </div>
             )}

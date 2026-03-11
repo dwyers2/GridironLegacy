@@ -9,6 +9,20 @@ interface ManagerInsightsProps {
   fetchProgress?: FetchProgress | null;
   onRefreshTendency?: (managerId: string) => void;
   refreshingManagers?: Set<string>;
+  tab?: 'ownership' | 'tendencies';
+}
+
+const POSITION_STYLES: Record<string, React.CSSProperties> = {
+  QB:  { background: 'rgba(239,68,68,0.12)',  color: '#F87171', border: '1px solid rgba(239,68,68,0.28)' },
+  RB:  { background: 'rgba(34,197,94,0.12)',  color: '#4ADE80', border: '1px solid rgba(34,197,94,0.28)' },
+  WR:  { background: 'rgba(59,130,246,0.12)', color: '#60A5FA', border: '1px solid rgba(59,130,246,0.28)' },
+  TE:  { background: 'rgba(212,160,23,0.12)', color: '#D4A017', border: '1px solid rgba(212,160,23,0.3)' },
+  K:   { background: 'rgba(168,85,247,0.12)', color: '#C084FC', border: '1px solid rgba(168,85,247,0.28)' },
+  DEF: { background: 'rgba(100,116,139,0.12)',color: '#94A3B8', border: '1px solid rgba(100,116,139,0.28)' },
+};
+
+function positionStyle(pos: string): React.CSSProperties {
+  return POSITION_STYLES[pos] || { background: 'rgba(100,116,139,0.1)', color: '#94A3B8', border: '1px solid rgba(100,116,139,0.2)' };
 }
 
 const ManagerInsights: React.FC<ManagerInsightsProps> = ({
@@ -17,29 +31,47 @@ const ManagerInsights: React.FC<ManagerInsightsProps> = ({
   loading,
   fetchProgress,
   onRefreshTendency,
-  refreshingManagers
+  refreshingManagers,
+  tab,
 }) => {
   const [activeTab, setActiveTab] = useState<'ownership' | 'tendencies'>('ownership');
   const [ownershipFilter, setOwnershipFilter] = useState(3);
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center min-h-screen">
-        <div className="text-center">
-          <div className="w-16 h-16 border-4 border-indigo-500/20 border-t-indigo-500 rounded-full animate-spin mx-auto mb-4" />
-          <p className="text-xl font-bold text-slate-400">Analyzing Manager Histories...</p>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '400px' }}>
+        <div style={{ textAlign: 'center' }}>
+          <div style={{
+            width: '52px', height: '52px', margin: '0 auto 1.25rem',
+            border: '3px solid rgba(212,160,23,0.15)',
+            borderTop: '3px solid var(--gold)',
+            borderRadius: '50%',
+            animation: 'spin 1s linear infinite',
+          }} />
+          <p style={{
+            fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700,
+            fontSize: '0.875rem', letterSpacing: '0.14em',
+            color: 'var(--text-secondary)', textTransform: 'uppercase', margin: 0,
+          }}>
+            Analyzing Manager Histories...
+          </p>
           {fetchProgress && (
-            <div className="mt-4">
-              <p className="text-indigo-400 font-medium">
+            <div style={{ marginTop: '1.25rem' }}>
+              <p style={{ color: 'var(--gold)', fontFamily: "'Outfit', sans-serif", fontSize: '0.875rem', margin: '0 0 0.5rem' }}>
                 Fetching {fetchProgress.season} season...
               </p>
-              <div className="w-64 h-2 bg-slate-700 rounded-full mt-2 mx-auto overflow-hidden">
-                <div
-                  className="h-full bg-indigo-500 transition-all duration-300"
-                  style={{ width: `${(fetchProgress.current / fetchProgress.total) * 100}%` }}
-                />
+              <div style={{
+                width: '240px', height: '4px',
+                background: 'rgba(212,160,23,0.1)', borderRadius: '2px',
+                margin: '0 auto', overflow: 'hidden',
+              }}>
+                <div style={{
+                  height: '100%', background: 'var(--gold)', borderRadius: '2px',
+                  transition: 'width 0.3s',
+                  width: `${(fetchProgress.current / fetchProgress.total) * 100}%`,
+                }} />
               </div>
-              <p className="text-xs text-slate-500 mt-1">
+              <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '0.4rem', fontFamily: "'Outfit', sans-serif" }}>
                 {fetchProgress.current} of {fetchProgress.total} seasons
               </p>
             </div>
@@ -49,326 +81,448 @@ const ManagerInsights: React.FC<ManagerInsightsProps> = ({
     );
   }
 
-  // Calculate stats for display
   const totalSeasons = new Set(ownershipData.flatMap(m => m.seasonsTracked || [])).size;
 
+  const ownershipContent = (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+      {/* Filter Controls */}
+      <div style={{
+        display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '0.75rem',
+        background: 'var(--surface)', border: '1px solid var(--border)',
+        borderRadius: '8px', padding: '0.875rem 1.25rem',
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.875rem', flexWrap: 'wrap' }}>
+          <Filter size={15} style={{ color: 'var(--text-muted)' }} />
+          <span style={{
+            fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700,
+            fontSize: '0.7rem', letterSpacing: '0.14em',
+            color: 'var(--text-secondary)', textTransform: 'uppercase',
+          }}>
+            Min. Ownership:
+          </span>
+          <div style={{ display: 'flex', gap: '0.35rem' }}>
+            {[1, 2, 3, 4, 5].map((num) => (
+              <button
+                key={num}
+                onClick={() => setOwnershipFilter(num)}
+                style={{
+                  padding: '0.3rem 0.7rem',
+                  borderRadius: '4px',
+                  fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700,
+                  fontSize: '0.8rem', letterSpacing: '0.06em',
+                  cursor: 'pointer', transition: 'all 0.15s',
+                  background: ownershipFilter === num ? 'var(--gold)' : 'rgba(255,255,255,0.04)',
+                  color: ownershipFilter === num ? '#0C0F16' : 'var(--text-muted)',
+                  border: ownershipFilter === num ? '1px solid var(--gold)' : '1px solid var(--border-muted)',
+                }}
+              >
+                {num}+
+              </button>
+            ))}
+          </div>
+        </div>
+        <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)', fontFamily: "'Outfit', sans-serif" }}>
+          Showing players owned {ownershipFilter}+ times
+        </span>
+      </div>
+
+      {/* Manager Cards */}
+      {ownershipData.map((manager) => {
+        const filteredPlayers = manager.players.filter(p => p.timesOwned >= ownershipFilter);
+        if (filteredPlayers.length === 0) return null;
+
+        return (
+          <div
+            key={manager.managerId}
+            style={{
+              background: 'var(--surface)', border: '1px solid var(--border)',
+              borderRadius: '10px', overflow: 'hidden',
+            }}
+          >
+            {/* Card Header */}
+            <div style={{
+              padding: '1.5rem',
+              background: 'linear-gradient(135deg, rgba(212,160,23,0.06) 0%, transparent 60%)',
+              borderBottom: '1px solid var(--border)',
+              display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '1rem', flexWrap: 'wrap',
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+                <div style={{
+                  width: '52px', height: '52px',
+                  background: 'var(--gold-dim)', border: '1px solid rgba(212,160,23,0.2)',
+                  borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
+                }}>
+                  <Users style={{ color: 'var(--gold)' }} size={24} />
+                </div>
+                <div>
+                  <h2 style={{
+                    fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700,
+                    fontSize: '1.4rem', letterSpacing: '0.04em',
+                    color: 'var(--text-primary)', margin: 0,
+                  }}>
+                    {manager.managerName}
+                  </h2>
+                  <p style={{ color: 'var(--text-secondary)', fontFamily: "'Outfit', sans-serif", fontSize: '0.8rem', margin: '0.2rem 0 0' }}>
+                    {filteredPlayers.length} players with {ownershipFilter}+ seasons
+                  </p>
+                  {manager.seasonsTracked && manager.seasonsTracked.length > 0 && (
+                    <div style={{ display: 'flex', gap: '0.3rem', marginTop: '0.5rem', flexWrap: 'wrap' }}>
+                      {manager.seasonsTracked.map(season => (
+                        <span key={season} style={{
+                          fontSize: '0.6rem', padding: '0.15rem 0.4rem',
+                          background: 'rgba(255,255,255,0.04)', border: '1px solid var(--border-muted)',
+                          borderRadius: '3px', color: 'var(--text-muted)', fontFamily: 'monospace',
+                        }}>
+                          {season}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+              <div style={{ textAlign: 'right' }}>
+                <div style={{ fontFamily: "'Cinzel', serif", fontWeight: 900, fontSize: '2rem', color: 'var(--gold)', lineHeight: 1 }}>
+                  {filteredPlayers.reduce((sum, p) => sum + p.timesOwned, 0)}
+                </div>
+                <div style={{
+                  fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700,
+                  fontSize: '0.6rem', letterSpacing: '0.16em',
+                  color: 'var(--text-muted)', textTransform: 'uppercase', marginTop: '0.2rem',
+                }}>
+                  Total Ownerships
+                </div>
+              </div>
+            </div>
+
+            {/* Table */}
+            <div style={{ overflowX: 'auto' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                <thead>
+                  <tr style={{ background: 'var(--surface-2)' }}>
+                    {['Rank', 'Player', 'Position', 'Team', 'Times Owned', 'Seasons'].map((h, i) => (
+                      <th key={h} style={{
+                        padding: '0.75rem 1.25rem',
+                        fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700,
+                        fontSize: '0.6rem', letterSpacing: '0.18em', textTransform: 'uppercase',
+                        color: 'var(--text-muted)',
+                        textAlign: i === 0 || i === 1 || i === 5 ? 'left' : 'center',
+                        borderBottom: '1px solid var(--border)',
+                        whiteSpace: 'nowrap',
+                      }}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredPlayers
+                    .sort((a, b) => b.timesOwned - a.timesOwned)
+                    .map((player, index) => (
+                      <tr
+                        key={player.playerId}
+                        style={{ borderBottom: '1px solid rgba(212,160,23,0.05)', transition: 'background 0.15s' }}
+                        onMouseEnter={e => (e.currentTarget.style.background = 'rgba(212,160,23,0.04)')}
+                        onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
+                      >
+                        <td style={{ padding: '0.875rem 1.25rem' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                            {index < 3 && (
+                              <Trophy
+                                size={13}
+                                style={{ color: index === 0 ? '#FBBF24' : index === 1 ? '#94A3B8' : '#CD7F32' }}
+                              />
+                            )}
+                            <span style={{
+                              fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700,
+                              fontSize: '0.8rem', letterSpacing: '0.06em', color: 'var(--text-muted)',
+                            }}>#{index + 1}</span>
+                          </div>
+                        </td>
+                        <td style={{ padding: '0.875rem 1.25rem' }}>
+                          <div style={{
+                            fontFamily: "'Outfit', sans-serif", fontWeight: 600,
+                            color: 'var(--text-primary)', fontSize: '0.875rem',
+                          }}>
+                            {player.playerName}
+                          </div>
+                        </td>
+                        <td style={{ padding: '0.875rem 1.25rem', textAlign: 'center' }}>
+                          <span style={{
+                            display: 'inline-block', padding: '0.2rem 0.6rem',
+                            borderRadius: '4px', fontSize: '0.7rem', fontWeight: 700,
+                            fontFamily: "'Barlow Condensed', sans-serif", letterSpacing: '0.06em',
+                            ...positionStyle(player.position),
+                          }}>
+                            {player.position}
+                          </span>
+                        </td>
+                        <td style={{ padding: '0.875rem 1.25rem', textAlign: 'center' }}>
+                          <span style={{ fontFamily: 'monospace', fontSize: '0.8rem', color: 'var(--text-secondary)', fontWeight: 600 }}>
+                            {player.team}
+                          </span>
+                        </td>
+                        <td style={{ padding: '0.875rem 1.25rem', textAlign: 'center' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.4rem' }}>
+                            {player.timesOwned > 1 && <Heart size={13} style={{ color: 'var(--red)' }} />}
+                            <span style={{ fontFamily: "'Cinzel', serif", fontWeight: 900, fontSize: '1.2rem', color: 'var(--green)' }}>
+                              {player.timesOwned}
+                            </span>
+                          </div>
+                        </td>
+                        <td style={{ padding: '0.875rem 1.25rem' }}>
+                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.25rem' }}>
+                            {player.seasons
+                              .sort((a, b) => Number(b) - Number(a))
+                              .map((season) => (
+                                <span key={season} style={{
+                                  padding: '0.15rem 0.45rem',
+                                  background: 'var(--gold-dim)', border: '1px solid rgba(212,160,23,0.2)',
+                                  borderRadius: '3px', fontSize: '0.6rem', fontWeight: 700,
+                                  color: 'var(--gold)',
+                                  fontFamily: "'Barlow Condensed', sans-serif", letterSpacing: '0.06em',
+                                }}>
+                                  {season}
+                                </span>
+                              ))}
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        );
+      })}
+
+      {ownershipData.every(m => m.players.filter(p => p.timesOwned >= ownershipFilter).length === 0) && (
+        <div style={{
+          textAlign: 'center', padding: '4rem 2rem',
+          background: 'var(--surface)', border: '1px dashed var(--border)', borderRadius: '8px',
+        }}>
+          <Users style={{ color: 'var(--text-muted)', margin: '0 auto 1rem', opacity: 0.3 }} size={44} />
+          <p style={{ color: 'var(--text-secondary)', fontFamily: "'Outfit', sans-serif", margin: '0 0 0.5rem' }}>
+            No players found with {ownershipFilter}+ seasons of ownership.
+          </p>
+          <p style={{ color: 'var(--text-muted)', fontSize: '0.8rem', fontFamily: "'Outfit', sans-serif", margin: 0 }}>
+            Try lowering the minimum ownership filter.
+          </p>
+        </div>
+      )}
+    </div>
+  );
+
+  const tendenciesContent = (
+    <div style={{ display: 'grid', gap: '1.25rem', gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))' }}>
+      {tendencies.map((tendency) => (
+        <div
+          key={tendency.managerId}
+          style={{
+            background: 'var(--surface)', border: '1px solid var(--border)',
+            borderRadius: '10px', padding: '1.75rem',
+            transition: 'border-color 0.2s',
+          }}
+          onMouseEnter={e => (e.currentTarget.style.borderColor = 'rgba(212,160,23,0.25)')}
+          onMouseLeave={e => (e.currentTarget.style.borderColor = 'var(--border)')}
+        >
+          {/* Card header */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.875rem', marginBottom: '1.5rem' }}>
+            <div style={{
+              padding: '0.6rem', background: 'var(--gold-dim)',
+              border: '1px solid rgba(212,160,23,0.2)', borderRadius: '8px', flexShrink: 0,
+            }}>
+              <Sparkles style={{ color: 'var(--gold)' }} size={18} />
+            </div>
+            <div style={{ flex: 1 }}>
+              <h3 style={{
+                fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700,
+                fontSize: '1.2rem', letterSpacing: '0.04em',
+                color: 'var(--text-primary)', margin: 0,
+              }}>
+                {tendency.managerName}
+              </h3>
+              <p style={{
+                fontFamily: "'Barlow Condensed', sans-serif",
+                fontSize: '0.6rem', letterSpacing: '0.18em',
+                color: 'var(--text-muted)', textTransform: 'uppercase', margin: '0.2rem 0 0',
+              }}>
+                AI Analysis
+              </p>
+            </div>
+            {onRefreshTendency && (
+              <button
+                onClick={() => onRefreshTendency(tendency.managerId)}
+                disabled={refreshingManagers?.has(tendency.managerId)}
+                style={{
+                  padding: '0.4rem', borderRadius: '6px',
+                  background: 'rgba(255,255,255,0.04)', border: '1px solid var(--border-muted)',
+                  cursor: refreshingManagers?.has(tendency.managerId) ? 'not-allowed' : 'pointer',
+                  opacity: refreshingManagers?.has(tendency.managerId) ? 0.4 : 1,
+                  transition: 'all 0.15s',
+                }}
+                onMouseEnter={e => {
+                  if (!refreshingManagers?.has(tendency.managerId)) {
+                    e.currentTarget.style.background = 'var(--gold-dim)';
+                    e.currentTarget.style.borderColor = 'rgba(212,160,23,0.2)';
+                  }
+                }}
+                onMouseLeave={e => {
+                  e.currentTarget.style.background = 'rgba(255,255,255,0.04)';
+                  e.currentTarget.style.borderColor = 'var(--border-muted)';
+                }}
+                title="Refresh AI summary"
+              >
+                <RefreshCw
+                  size={14}
+                  style={{
+                    color: 'var(--text-muted)',
+                    animation: refreshingManagers?.has(tendency.managerId) ? 'spin 1s linear infinite' : 'none',
+                  }}
+                />
+              </button>
+            )}
+          </div>
+
+          {/* Stats row */}
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', marginBottom: '1.25rem' }}>
+            <div style={{
+              background: 'var(--surface-2)', border: '1px solid var(--border)',
+              borderRadius: '6px', padding: '1rem',
+            }}>
+              <div style={{
+                fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700,
+                fontSize: '0.6rem', letterSpacing: '0.18em',
+                color: 'var(--text-muted)', textTransform: 'uppercase', marginBottom: '0.5rem',
+              }}>
+                Loyalty Score
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                <Heart style={{ color: 'var(--red)' }} size={14} />
+                <span style={{ fontFamily: "'Cinzel', serif", fontWeight: 900, fontSize: '1.4rem', color: 'var(--text-primary)' }}>
+                  {tendency.loyaltyScore}%
+                </span>
+              </div>
+            </div>
+            <div style={{
+              background: 'var(--surface-2)', border: '1px solid var(--border)',
+              borderRadius: '6px', padding: '1rem',
+            }}>
+              <div style={{
+                fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700,
+                fontSize: '0.6rem', letterSpacing: '0.18em',
+                color: 'var(--text-muted)', textTransform: 'uppercase', marginBottom: '0.5rem',
+              }}>
+                Top Position
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                <TrendingUp style={{ color: 'var(--green)' }} size={14} />
+                <span style={{ fontFamily: "'Cinzel', serif", fontWeight: 900, fontSize: '1.4rem', color: 'var(--text-primary)' }}>
+                  {tendency.topPositions[0] || 'N/A'}
+                </span>
+              </div>
+            </div>
+          </div>
+
+          {/* Position preferences */}
+          <div style={{ marginBottom: '1.25rem' }}>
+            <div style={{
+              fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700,
+              fontSize: '0.6rem', letterSpacing: '0.18em',
+              color: 'var(--text-muted)', textTransform: 'uppercase', marginBottom: '0.6rem',
+            }}>
+              Position Preferences
+            </div>
+            <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap' }}>
+              {tendency.topPositions.map((pos, i) => (
+                <span
+                  key={pos}
+                  style={{
+                    padding: '0.25rem 0.65rem', borderRadius: '4px',
+                    fontSize: '0.75rem', fontWeight: 700,
+                    fontFamily: "'Barlow Condensed', sans-serif", letterSpacing: '0.06em',
+                    ...(i === 0
+                      ? { background: 'var(--gold-dim)', border: '1px solid rgba(212,160,23,0.25)', color: 'var(--gold)' }
+                      : { background: 'rgba(255,255,255,0.04)', border: '1px solid var(--border-muted)', color: 'var(--text-secondary)' }),
+                  }}
+                >
+                  {pos}
+                </span>
+              ))}
+            </div>
+          </div>
+
+          {/* Analysis quote */}
+          <div style={{
+            background: 'var(--surface-2)', border: '1px solid var(--border)',
+            borderRadius: '6px', padding: '1.125rem 1.25rem',
+          }}>
+            <p style={{
+              color: 'var(--text-secondary)', fontFamily: "'Outfit', sans-serif",
+              fontStyle: 'italic', lineHeight: 1.65, fontSize: '0.875rem', margin: 0, fontWeight: 300,
+            }}>"{tendency.analysis}"</p>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+
+  // Controlled (embedded) mode: render only the specified tab's content
+  if (tab) {
+    return tab === 'ownership' ? ownershipContent : tendenciesContent;
+  }
+
+  // Standalone mode: full component with header and internal tabs
   return (
     <div className="max-w-7xl mx-auto px-4 py-8">
-      {/* Header */}
-      <div className="mb-8">
-        <h1 className="text-5xl font-black tracking-tighter text-white mb-2">MANAGER INSIGHTS</h1>
-        <p className="text-indigo-400 font-bold uppercase tracking-widest text-sm">
-          Deep Dive into Ownership Patterns & Tendencies
+      <div style={{ marginBottom: '2rem' }}>
+        <h1 style={{
+          fontFamily: "'Cinzel', serif", fontWeight: 900,
+          fontSize: '2.5rem', letterSpacing: '0.04em',
+          color: 'var(--text-primary)', margin: '0 0 0.25rem',
+        }}>
+          MANAGER INSIGHTS
+        </h1>
+        <p style={{
+          fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700,
+          fontSize: '0.75rem', letterSpacing: '0.18em',
+          color: 'var(--gold)', textTransform: 'uppercase', margin: 0,
+        }}>
+          Deep Dive into Ownership Patterns &amp; Tendencies
           {totalSeasons > 0 && (
-            <span className="ml-2 text-slate-500">• {totalSeasons} seasons analyzed</span>
+            <span style={{ color: 'var(--text-muted)', marginLeft: '0.5rem' }}>
+              • {totalSeasons} seasons analyzed
+            </span>
           )}
         </p>
       </div>
 
-      {/* Tab Navigation */}
-      <div className="flex gap-4 mb-8 border-b border-slate-700">
-        <button
-          onClick={() => setActiveTab('ownership')}
-          className={`px-6 py-4 font-black uppercase tracking-wider transition-all relative ${
-            activeTab === 'ownership'
-              ? 'text-indigo-400'
-              : 'text-slate-500 hover:text-slate-300'
-          }`}
-        >
-          <div className="flex items-center gap-2">
-            <Users size={20} />
-            Player Ownership
-          </div>
-          {activeTab === 'ownership' && (
-            <div className="absolute bottom-0 left-0 right-0 h-1 bg-indigo-500" />
-          )}
-        </button>
-        <button
-          onClick={() => setActiveTab('tendencies')}
-          className={`px-6 py-4 font-black uppercase tracking-wider transition-all relative ${
-            activeTab === 'tendencies'
-              ? 'text-indigo-400'
-              : 'text-slate-500 hover:text-slate-300'
-          }`}
-        >
-          <div className="flex items-center gap-2">
-            <Sparkles size={20} />
-            AI Tendencies
-          </div>
-          {activeTab === 'tendencies' && (
-            <div className="absolute bottom-0 left-0 right-0 h-1 bg-indigo-500" />
-          )}
-        </button>
+      <div style={{ display: 'flex', gap: '0.25rem', borderBottom: '1px solid var(--border)', marginBottom: '2rem' }}>
+        {([
+          { id: 'ownership' as const, icon: <Users size={15} />, label: 'Player Ownership' },
+          { id: 'tendencies' as const, icon: <Sparkles size={15} />, label: 'AI Tendencies' },
+        ]).map(({ id, icon, label }) => {
+          const active = activeTab === id;
+          return (
+            <button
+              key={id}
+              onClick={() => setActiveTab(id)}
+              style={{
+                display: 'flex', alignItems: 'center', gap: '0.4rem',
+                padding: '0.75rem 1.25rem',
+                background: 'none', border: 'none', cursor: 'pointer',
+                borderBottom: `2px solid ${active ? 'var(--gold)' : 'transparent'}`,
+                marginBottom: '-1px',
+                color: active ? 'var(--gold)' : 'var(--text-muted)',
+                fontFamily: "'Barlow Condensed', sans-serif",
+                fontWeight: 700, fontSize: '0.75rem', letterSpacing: '0.14em',
+                textTransform: 'uppercase', transition: 'color 0.2s, border-color 0.2s',
+              }}
+            >
+              {icon}{label}
+            </button>
+          );
+        })}
       </div>
 
-      {/* Content */}
-      {activeTab === 'ownership' ? (
-        <div className="space-y-8">
-          {/* Filter Controls */}
-          <div className="flex items-center justify-between bg-slate-800/40 border border-slate-700/50 rounded-2xl p-4">
-            <div className="flex items-center gap-4">
-              <Filter size={20} className="text-slate-500" />
-              <span className="text-sm font-bold text-slate-400">Min. Ownership:</span>
-              <div className="flex gap-2">
-                {[1, 2, 3, 4, 5].map((num) => (
-                  <button
-                    key={num}
-                    onClick={() => setOwnershipFilter(num)}
-                    className={`px-4 py-2 rounded-lg font-bold text-sm transition-all ${
-                      ownershipFilter === num
-                        ? 'bg-indigo-600 text-white'
-                        : 'bg-slate-700/50 text-slate-400 hover:bg-slate-700'
-                    }`}
-                  >
-                    {num}+
-                  </button>
-                ))}
-              </div>
-            </div>
-            <span className="text-xs text-slate-500">
-              Showing players owned {ownershipFilter}+ times
-            </span>
-          </div>
-
-          {/* Manager Cards */}
-          {ownershipData.map((manager) => {
-            const filteredPlayers = manager.players.filter(p => p.timesOwned >= ownershipFilter);
-
-            // Hide managers with no qualifying players
-            if (filteredPlayers.length === 0) return null;
-
-            return (
-              <div
-                key={manager.managerId}
-                className="bg-slate-800/40 border border-slate-700/50 rounded-3xl overflow-hidden shadow-lg"
-              >
-                {/* Manager Header */}
-                <div className="p-6 bg-gradient-to-r from-indigo-600/20 to-purple-600/20 border-b border-slate-700/50">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-4">
-                      <div className="w-16 h-16 bg-indigo-900/30 rounded-2xl flex items-center justify-center border border-indigo-500/20">
-                        <Users className="text-indigo-400" size={32} />
-                      </div>
-                      <div>
-                        <h2 className="text-2xl font-black text-white">{manager.managerName}</h2>
-                        <p className="text-slate-400 font-medium">
-                          {filteredPlayers.length} players with {ownershipFilter}+ seasons
-                        </p>
-                        {/* Seasons tracked */}
-                        {manager.seasonsTracked && manager.seasonsTracked.length > 0 && (
-                          <div className="flex gap-1 mt-2 flex-wrap">
-                            {manager.seasonsTracked.map(season => (
-                              <span
-                                key={season}
-                                className="text-[10px] px-1.5 py-0.5 bg-slate-700/50 rounded text-slate-500"
-                              >
-                                {season}
-                              </span>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                    <div className="text-right">
-                      <div className="text-3xl font-black text-indigo-400">
-                        {filteredPlayers.reduce((sum, p) => sum + p.timesOwned, 0)}
-                      </div>
-                      <div className="text-xs text-slate-500 uppercase font-bold tracking-wider">
-                        Total Ownerships
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Player Table */}
-                <div className="overflow-x-auto">
-                  <table className="w-full">
-                    <thead className="bg-slate-900/50">
-                      <tr className="text-slate-500 text-xs uppercase font-black tracking-wider">
-                        <th className="px-6 py-4 text-left">Rank</th>
-                        <th className="px-6 py-4 text-left">Player</th>
-                        <th className="px-6 py-4 text-center">Position</th>
-                        <th className="px-6 py-4 text-center">Team</th>
-                        <th className="px-6 py-4 text-center">Times Owned</th>
-                        <th className="px-6 py-4 text-left">Seasons</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-800">
-                      {filteredPlayers
-                        .sort((a, b) => b.timesOwned - a.timesOwned)
-                        .map((player, index) => (
-                          <tr
-                            key={player.playerId}
-                            className="hover:bg-indigo-500/5 transition-colors group"
-                          >
-                            <td className="px-6 py-4">
-                              <div className="flex items-center gap-2">
-                                {index < 3 && (
-                                  <Trophy
-                                    className={
-                                      index === 0
-                                        ? 'text-yellow-400'
-                                        : index === 1
-                                        ? 'text-slate-400'
-                                        : 'text-orange-600'
-                                    }
-                                    size={16}
-                                  />
-                                )}
-                                <span className="font-bold text-slate-400">#{index + 1}</span>
-                              </div>
-                            </td>
-                            <td className="px-6 py-4">
-                              <div className="font-black text-white group-hover:text-indigo-100">
-                                {player.playerName}
-                              </div>
-                            </td>
-                            <td className="px-6 py-4 text-center">
-                              <span className="inline-block px-3 py-1 bg-slate-700/50 border border-slate-600 rounded-lg text-sm font-bold text-indigo-400">
-                                {player.position}
-                              </span>
-                            </td>
-                            <td className="px-6 py-4 text-center">
-                              <span className="text-sm font-bold text-slate-400">
-                                {player.team}
-                              </span>
-                            </td>
-                            <td className="px-6 py-4 text-center">
-                              <div className="flex items-center justify-center gap-2">
-                                {player.timesOwned > 1 && (
-                                  <Heart className="text-red-400" size={16} />
-                                )}
-                                <span className="text-2xl font-black text-emerald-400">
-                                  {player.timesOwned}
-                                </span>
-                              </div>
-                            </td>
-                            <td className="px-6 py-4">
-                              <div className="flex flex-wrap gap-1">
-                                {player.seasons
-                                  .sort((a, b) => Number(b) - Number(a))
-                                  .map((season) => (
-                                    <span
-                                      key={season}
-                                      className="px-2 py-0.5 bg-indigo-500/10 border border-indigo-500/30 rounded text-xs font-bold text-indigo-400"
-                                    >
-                                      {season}
-                                    </span>
-                                  ))}
-                              </div>
-                            </td>
-                          </tr>
-                        ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            );
-          })}
-
-          {/* Show message if no managers have qualifying players */}
-          {ownershipData.every(m => m.players.filter(p => p.timesOwned >= ownershipFilter).length === 0) && (
-            <div className="text-center py-16 bg-slate-800/20 rounded-3xl border border-dashed border-slate-700">
-              <Users className="w-12 h-12 text-slate-600 mx-auto mb-4" />
-              <p className="text-slate-400 font-medium">
-                No players found with {ownershipFilter}+ seasons of ownership.
-              </p>
-              <p className="text-slate-500 text-sm mt-2">
-                Try lowering the minimum ownership filter.
-              </p>
-            </div>
-          )}
-        </div>
-      ) : (
-        <div className="grid gap-6 md:grid-cols-2">
-          {tendencies.map((tendency) => (
-            <div
-              key={tendency.managerId}
-              className="bg-gradient-to-br from-indigo-600/10 via-slate-900/90 to-purple-600/10 border border-white/10 p-8 rounded-3xl shadow-2xl"
-            >
-              {/* Manager Header */}
-              <div className="flex items-center gap-4 mb-6">
-                <div className="p-3 bg-indigo-500/20 rounded-xl border border-indigo-500/30">
-                  <Sparkles className="text-indigo-400" size={24} />
-                </div>
-                <div className="flex-1">
-                  <h3 className="text-2xl font-black text-white">{tendency.managerName}</h3>
-                  <p className="text-xs text-slate-500 uppercase font-bold tracking-wider">
-                    AI Analysis
-                  </p>
-                </div>
-                {onRefreshTendency && (
-                  <button
-                    onClick={() => onRefreshTendency(tendency.managerId)}
-                    disabled={refreshingManagers?.has(tendency.managerId)}
-                    className="p-2 rounded-lg bg-slate-800/60 hover:bg-indigo-500/20 border border-slate-700 hover:border-indigo-500/40 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
-                    title="Refresh AI summary"
-                  >
-                    <RefreshCw
-                      size={15}
-                      className={`text-slate-400 hover:text-indigo-400 transition-colors ${refreshingManagers?.has(tendency.managerId) ? 'animate-spin' : ''}`}
-                    />
-                  </button>
-                )}
-              </div>
-
-              {/* Stats */}
-              <div className="grid grid-cols-2 gap-4 mb-6">
-                <div className="bg-slate-800/50 rounded-xl p-4 border border-slate-700">
-                  <div className="text-xs text-slate-500 uppercase font-bold tracking-wider mb-1">
-                    Loyalty Score
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <Heart className="text-red-400" size={16} />
-                    <span className="text-2xl font-black text-white">
-                      {tendency.loyaltyScore}%
-                    </span>
-                  </div>
-                </div>
-                <div className="bg-slate-800/50 rounded-xl p-4 border border-slate-700">
-                  <div className="text-xs text-slate-500 uppercase font-bold tracking-wider mb-1">
-                    Top Position
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <TrendingUp className="text-emerald-400" size={16} />
-                    <span className="text-2xl font-black text-white">
-                      {tendency.topPositions[0] || 'N/A'}
-                    </span>
-                  </div>
-                </div>
-              </div>
-
-              {/* Top Positions */}
-              <div className="mb-6">
-                <div className="text-xs text-slate-500 uppercase font-bold tracking-wider mb-3">
-                  Position Preferences
-                </div>
-                <div className="flex gap-2 flex-wrap">
-                  {tendency.topPositions.map((pos, i) => (
-                    <span
-                      key={pos}
-                      className={`px-3 py-1 rounded-lg text-sm font-bold ${
-                        i === 0
-                          ? 'bg-indigo-500/20 border border-indigo-500/30 text-indigo-400'
-                          : 'bg-slate-700/50 border border-slate-600 text-slate-400'
-                      }`}
-                    >
-                      {pos}
-                    </span>
-                  ))}
-                </div>
-              </div>
-
-              {/* AI Analysis */}
-              <div className="bg-slate-900/50 rounded-xl p-6 border border-slate-700">
-                <p className="text-slate-200 leading-relaxed italic">
-                  "{tendency.analysis}"
-                </p>
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
+      {activeTab === 'ownership' ? ownershipContent : tendenciesContent}
     </div>
   );
 };
