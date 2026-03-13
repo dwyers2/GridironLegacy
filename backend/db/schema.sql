@@ -89,6 +89,28 @@ CREATE TABLE IF NOT EXISTS draft_pick_trades (
 );
 CREATE INDEX IF NOT EXISTS idx_pick_trades_league ON draft_pick_trades(league_key);
 
+-- Keeper designations (user-marked players kept from prior seasons)
+CREATE TABLE IF NOT EXISTS keeper_designations (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  league_key TEXT NOT NULL,
+  pick INTEGER NOT NULL,
+  UNIQUE(league_key, pick)
+);
+CREATE INDEX IF NOT EXISTS idx_keepers_league ON keeper_designations(league_key);
+
+-- Manually added keepers (not tied to a draft pick)
+CREATE TABLE IF NOT EXISTS manual_keepers (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  league_key TEXT NOT NULL,
+  team_key TEXT NOT NULL,
+  player_key TEXT NOT NULL DEFAULT '',
+  player_name TEXT NOT NULL,
+  position TEXT NOT NULL DEFAULT '',
+  nfl_team TEXT NOT NULL DEFAULT '',
+  UNIQUE(league_key, team_key, player_name)
+);
+CREATE INDEX IF NOT EXISTS idx_manual_keepers_league ON manual_keepers(league_key);
+
 -- AI-generated manager tendencies (cached to avoid regenerating)
 CREATE TABLE IF NOT EXISTS manager_tendencies (
   manager_id TEXT PRIMARY KEY,

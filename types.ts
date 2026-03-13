@@ -82,6 +82,8 @@ export interface DraftPick {
   nflTeam: string;
   /** Set when this pick slot was acquired via trade; holds the original owner's name */
   originalManagerName?: string;
+  /** User-designated keeper from a prior season */
+  isKeeper?: boolean;
 }
 
 export interface SeasonDraftData {
@@ -90,6 +92,29 @@ export interface SeasonDraftData {
   picks: DraftPick[];
   // Ordered by draft slot (round-1 pick order)
   teams: Array<{ teamKey: string; managerName: string; draftSlot: number }>;
+}
+
+export interface KeeperEntry {
+  playerKey: string;
+  playerName: string;
+  position: string;
+  nflTeam: string;
+  roundDrafted: number;
+  keeperCost: number;
+  consecutiveYears: number;
+  isManual?: boolean;
+}
+
+export interface ManagerKeepers {
+  teamKey: string;
+  managerName: string;
+  keepers: KeeperEntry[];
+}
+
+export interface KeeperSummary {
+  upcomingYear: string | null;
+  managers: ManagerKeepers[];
+  leagueKey?: string;
 }
 
 export enum AppState {

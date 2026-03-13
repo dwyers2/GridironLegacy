@@ -348,6 +348,119 @@ export function getLeagueChain(rootKey: string): Array<{ leagueKey: string; seas
   try { return JSON.parse(row.value); } catch { return null; }
 }
 
+// Get all teams for a specific league
+export function getTeamsForLeague(leagueKey: string): Array<{
+  team_key: string;
+  manager_id: string;
+  manager_name: string;
+}> {
+  return db.prepare(`
+    SELECT team_key, manager_id, manager_name FROM teams WHERE league_key = ? ORDER BY manager_name
+  `).all(leagueKey) as any[];
+}
+
+// Search players by name (for keeper autocomplete)
+export function searchPlayers(query: string, limit = 10): Array<{
+  player_key: string;
+  player_name: string;
+  position: string;
+  nfl_team: string;
+}> {
+  return db.prepare(`
+    SELECT player_id as player_key, player_name, position, nfl_team
+    FROM players WHERE player_name LIKE ? ORDER BY player_name LIMIT ?
+  `).all(`%${query}%`, limit) as any[];
+}
+
+// Add a manual keeper
+export function addManualKeeper(
+  leagueKey: string, teamKey: string, playerKey: string,
+  playerName: string, position: string, nflTeam: string
+) {
+  db.prepare(`
+    INSERT OR REPLACE INTO manual_keepers (league_key, team_key, player_key, player_name, position, nfl_team)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `).run(leagueKey, teamKey, playerKey, playerName, position, nflTeam);
+}
+
+// Remove a manual keeper
+export function removeManualKeeper(leagueKey: string, teamKey: string, playerName: string) {
+  db.prepare(`
+    DELETE FROM manual_keepers WHERE league_key = ? AND team_key = ? AND player_name = ?
+  `).run(leagueKey, teamKey, playerName);
+}
+
+// Get all manual keepers for a league
+export function getManualKeepersForLeague(leagueKey: string): Array<{
+  team_key: string;
+  player_key: string;
+  player_name: string;
+  position: string;
+  nfl_team: string;
+}> {
+  return db.prepare(`
+    SELECT team_key, player_key, player_name, position, nfl_team
+    FROM manual_keepers WHERE league_key = ? ORDER BY team_key, player_name
+  `).all(leagueKey) as any[];
+}
+
+// Get all keeper entries across a set of league keys (for summary/consecutive-years calculation)
+// The owning manager is resolved from the final-season roster (roster_entries), not the
+// original draft pick, so traded players are attributed to their end-of-year owner.
+export function getKeeperSummaryForChain(chainLeagueKeys: string[]): Array<{
+  league_key: string;
+  season: string;
+  player_key: string;
+  player_name: string;
+  position: string;
+  nfl_team: string;
+  round: number;
+  team_key: string;
+  manager_name: string;
+  manager_id: string;
+}> {
+  if (chainLeagueKeys.length === 0) return [];
+  const placeholders = chainLeagueKeys.map(() => '?').join(', ');
+  return db.prepare(`
+    SELECT kd.league_key, dp.season, dp.player_key, dp.player_name, dp.position, dp.nfl_team,
+           dp.round,
+           COALESCE(final_owner.team_key, dp.team_key) as team_key,
+           COALESCE(t_owner.manager_name, t_draft.manager_name, dp.team_key) as manager_name,
+           COALESCE(t_owner.manager_id, t_draft.manager_id, '') as manager_id
+    FROM keeper_designations kd
+    JOIN draft_picks dp ON kd.league_key = dp.league_key AND kd.pick = dp.pick
+    LEFT JOIN teams t_draft ON dp.team_key = t_draft.team_key
+    LEFT JOIN (
+      SELECT re.player_id, re.season, t_re.league_key, MIN(re.team_key) as team_key
+      FROM roster_entries re
+      INNER JOIN teams t_re ON re.team_key = t_re.team_key
+      GROUP BY re.player_id, re.season, t_re.league_key
+    ) final_owner ON final_owner.player_id = SUBSTR(dp.player_key, INSTR(dp.player_key, '.p.') + 3)
+                  AND final_owner.season = dp.season
+                  AND final_owner.league_key = kd.league_key
+    LEFT JOIN teams t_owner ON final_owner.team_key = t_owner.team_key
+    WHERE kd.league_key IN (${placeholders})
+    ORDER BY dp.season DESC, COALESCE(final_owner.team_key, dp.team_key), dp.round
+  `).all(...chainLeagueKeys) as any[];
+}
+
+// Get all keeper-designated pick numbers for a league
+export function getKeepersForLeague(leagueKey: string): number[] {
+  return (db.prepare(`SELECT pick FROM keeper_designations WHERE league_key = ?`).all(leagueKey) as Array<{ pick: number }>).map(r => r.pick);
+}
+
+// Toggle a keeper designation; returns true if now a keeper, false if removed
+export function toggleKeeper(leagueKey: string, pick: number): boolean {
+  const existing = db.prepare(`SELECT id FROM keeper_designations WHERE league_key = ? AND pick = ?`).get(leagueKey, pick);
+  if (existing) {
+    db.prepare(`DELETE FROM keeper_designations WHERE league_key = ? AND pick = ?`).run(leagueKey, pick);
+    return false;
+  } else {
+    db.prepare(`INSERT INTO keeper_designations (league_key, pick) VALUES (?, ?)`).run(leagueKey, pick);
+    return true;
+  }
+}
+
 // Transaction helper for bulk inserts
 export function runInTransaction<T>(fn: () => T): T {
   const transaction = db.transaction(fn);

@@ -1303,12 +1303,11 @@ export const getMultiSeasonDraftResults = async (
               nflTeam: p.nfl_team,
               originalManagerName: p.original_manager_name || undefined,
             }));
-            const round1 = picks.filter(p => p.round === 1).sort((a, b) => a.pick - b.pick);
             return {
               season: s.season,
               leagueKey: s.leagueKey,
               picks,
-              teams: round1.map((p, idx) => ({ teamKey: p.teamKey, managerName: p.managerName, draftSlot: idx + 1 })),
+              teams: teamsFromPicks(picks),
             };
           });
         results.sort((a, b) => Number(b.season) - Number(a.season));

@@ -746,6 +746,165 @@ app.get('/api/cache/draft/:leagueKey', (req, res) => {
   }
 });
 
+// Get keeper summary for upcoming year (grouped by manager, with consecutive-year streaks)
+app.get('/api/keepers/summary/:leagueKey', (req, res) => {
+  try {
+    const { leagueKey } = req.params;
+    const chain = db.getLeagueChain(leagueKey);
+    if (!chain || chain.length === 0) return res.json({ upcomingYear: null, managers: [] });
+
+    // Derive most recent season from the chain itself (don't require keepers to exist)
+    const sortedChain = [...chain].sort((a: any, b: any) => Number(b.season) - Number(a.season));
+    const mostRecentChainEntry = sortedChain[0] as any;
+    const mostRecentSeason = mostRecentChainEntry.season as string;
+    const mostRecentLeagueKey = mostRecentChainEntry.leagueKey as string;
+    const upcomingYear = String(Number(mostRecentSeason) + 1);
+
+    const chainLeagueKeys = chain.map((c: any) => c.leagueKey);
+    const allKeepers = db.getKeeperSummaryForChain(chainLeagueKeys);
+
+    // Normalize player_key to just the numeric ID so cross-season comparisons work
+    // e.g. "423.p.30977" (2024) and "420.p.30977" (2023) both map to "30977"
+    const extractPlayerId = (playerKey: string): string => {
+      const m = playerKey.match(/\.p\.(\d+)$/);
+      return m ? m[1] : playerKey;
+    };
+
+    // Build a set of seasons each player has been kept (for consecutive count)
+    const playerKeptSeasons: Record<string, Set<number>> = {};
+    for (const k of allKeepers) {
+      const pid = extractPlayerId(k.player_key);
+      if (!playerKeptSeasons[pid]) playerKeptSeasons[pid] = new Set();
+      playerKeptSeasons[pid].add(Number(k.season));
+    }
+
+    const getConsecutiveYears = (playerKey: string): number => {
+      const kept = playerKeptSeasons[extractPlayerId(playerKey)] || new Set();
+      let count = 0;
+      let year = Number(mostRecentSeason);
+      while (kept.has(year)) { count++; year--; }
+      return count;
+    };
+
+    // Seed map with ALL teams from most recent league so every manager gets a card
+    const managerMap: Record<string, { teamKey: string; managerName: string; keepers: any[] }> = {};
+    for (const t of db.getTeamsForLeague(mostRecentLeagueKey)) {
+      managerMap[t.team_key] = { teamKey: t.team_key, managerName: t.manager_name, keepers: [] };
+    }
+
+    // Add draft-based keepers
+    const currentKeepers = allKeepers.filter((k: any) => k.season === mostRecentSeason);
+    for (const k of currentKeepers) {
+      if (!managerMap[k.team_key]) {
+        managerMap[k.team_key] = { teamKey: k.team_key, managerName: k.manager_name, keepers: [] };
+      }
+      managerMap[k.team_key].keepers.push({
+        playerKey: k.player_key,
+        playerName: k.player_name,
+        position: k.position,
+        nflTeam: k.nfl_team,
+        roundDrafted: k.round,
+        keeperCost: k.round + 1,
+        consecutiveYears: getConsecutiveYears(k.player_key),
+        isManual: false,
+      });
+    }
+
+    // Add manual keepers
+    for (const mk of db.getManualKeepersForLeague(mostRecentLeagueKey)) {
+      if (managerMap[mk.team_key]) {
+        managerMap[mk.team_key].keepers.push({
+          playerKey: mk.player_key || '',
+          playerName: mk.player_name,
+          position: mk.position,
+          nflTeam: mk.nfl_team,
+          roundDrafted: 0,
+          keeperCost: 0,
+          consecutiveYears: mk.player_key ? getConsecutiveYears(mk.player_key) : 0,
+          isManual: true,
+        });
+      }
+    }
+
+    for (const m of Object.values(managerMap)) {
+      m.keepers.sort((a: any, b: any) => {
+        if (a.isManual && !b.isManual) return 1;
+        if (!a.isManual && b.isManual) return -1;
+        return a.keeperCost - b.keeperCost;
+      });
+    }
+
+    const managers = Object.values(managerMap).sort((a: any, b: any) => a.managerName.localeCompare(b.managerName));
+    res.json({ upcomingYear, managers, leagueKey: mostRecentLeagueKey });
+  } catch (err: any) {
+    console.error('Failed to get keeper summary:', err);
+    res.status(500).json({ error: 'Failed to get keeper summary', message: err.message });
+  }
+});
+
+// Player search for keeper autocomplete
+app.get('/api/players/search', (req, res) => {
+  try {
+    const q = (req.query.q as string || '').trim();
+    if (q.length < 2) return res.json({ players: [] });
+    const players = db.searchPlayers(q, 10);
+    res.json({ players });
+  } catch (err: any) {
+    res.status(500).json({ error: 'Search failed', message: err.message });
+  }
+});
+
+// Add a manual keeper
+app.post('/api/keepers/manual', (req, res) => {
+  try {
+    const { leagueKey, teamKey, playerKey, playerName, position, nflTeam } = req.body;
+    if (!leagueKey || !teamKey || !playerName) {
+      return res.status(400).json({ error: 'leagueKey, teamKey, and playerName required' });
+    }
+    db.addManualKeeper(leagueKey, teamKey, playerKey || '', playerName, position || '', nflTeam || '');
+    res.json({ success: true });
+  } catch (err: any) {
+    res.status(500).json({ error: 'Failed to add manual keeper', message: err.message });
+  }
+});
+
+// Remove a manual keeper
+app.delete('/api/keepers/manual', (req, res) => {
+  try {
+    const { leagueKey, teamKey, playerName } = req.body;
+    if (!leagueKey || !teamKey || !playerName) {
+      return res.status(400).json({ error: 'leagueKey, teamKey, and playerName required' });
+    }
+    db.removeManualKeeper(leagueKey, teamKey, playerName);
+    res.json({ success: true });
+  } catch (err: any) {
+    res.status(500).json({ error: 'Failed to remove manual keeper', message: err.message });
+  }
+});
+
+// Get keeper designations for a league
+app.get('/api/keepers/:leagueKey', (req, res) => {
+  try {
+    const { leagueKey } = req.params;
+    const keepers = db.getKeepersForLeague(leagueKey);
+    res.json({ keepers });
+  } catch (err: any) {
+    res.status(500).json({ error: 'Failed to get keepers', message: err.message });
+  }
+});
+
+// Toggle a keeper designation (pick = overall pick number in the draft)
+app.post('/api/keepers/toggle', (req, res) => {
+  try {
+    const { leagueKey, pick } = req.body;
+    if (!leagueKey || pick === undefined) return res.status(400).json({ error: 'leagueKey and pick are required' });
+    const isKeeper = db.toggleKeeper(leagueKey, Number(pick));
+    res.json({ isKeeper, pick });
+  } catch (err: any) {
+    res.status(500).json({ error: 'Failed to toggle keeper', message: err.message });
+  }
+});
+
 // Clear only AI tendencies cache (keeps roster data)
 app.post('/api/cache/tendencies/clear', (req, res) => {
   try {
