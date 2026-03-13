@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { AppState, League, PlayerStats, ManagerHistory, ManagerOwnershipData, ManagerTendency, FetchProgress, SeasonDraftData } from './types';
+import { AppState, League, PlayerStats, ManagerHistory, ManagerOwnershipData, ManagerTendency, FetchProgress, SeasonDraftData, KeeperSummary } from './types';
 import * as yahooService from './services/yahooService';
 import * as geminiService from './services/geminiService';
 import ManagerInsights from './components/ManagerInsights';
 import DraftResults from './components/DraftResults';
+import KeeperBoard from './components/KeeperBoard';
 import OwnerPositionGrid from './components/OwnerPositionGrid';
 import DynastyAlchemyLogo from './components/DynastyAlchemyLogo';
 import {
@@ -13,7 +14,7 @@ import {
 import {
   LayoutDashboard, Users, Award,
   ChevronRight, ArrowLeft, LogOut, Loader2, Sparkles,
-  Trophy, TrendingUp, Info, ShieldAlert, BarChart3, ClipboardList, Target
+  Trophy, TrendingUp, Info, ShieldAlert, BarChart3, ClipboardList, Target, Shield
 } from 'lucide-react';
 
 const App: React.FC = () => {
@@ -30,7 +31,9 @@ const App: React.FC = () => {
   const [fetchProgress, setFetchProgress] = useState<FetchProgress | null>(null);
   const [draftData, setDraftData] = useState<SeasonDraftData[]>([]);
   const [draftLoading, setDraftLoading] = useState(false);
-  const [dashboardTab, setDashboardTab] = useState<'overview' | 'draft' | 'ownership' | 'tendencies' | 'owner-position'>('overview');
+  const [dashboardTab, setDashboardTab] = useState<'overview' | 'draft' | 'ownership' | 'tendencies' | 'owner-position' | 'keepers'>('overview');
+  const [keeperSummary, setKeeperSummary] = useState<KeeperSummary | null>(null);
+  const [keeperLoading, setKeeperLoading] = useState(false);
   const [refreshingManagers, setRefreshingManagers] = useState<Set<string>>(new Set());
 
   // ✅ Prevent double-processing with ref
@@ -357,6 +360,19 @@ const App: React.FC = () => {
     } finally {
       setLoading(false);
       setFetchProgress(null);
+    }
+  };
+
+  const handleLoadKeepers = async () => {
+    if (!selectedLeague) return;
+    setKeeperLoading(true);
+    try {
+      const res = await fetch(`http://localhost:3001/api/keepers/summary/${encodeURIComponent(selectedLeague.id)}`);
+      if (res.ok) setKeeperSummary(await res.json());
+    } catch (e) {
+      console.warn('Failed to load keeper summary:', e);
+    } finally {
+      setKeeperLoading(false);
     }
   };
 
@@ -749,6 +765,7 @@ const App: React.FC = () => {
                 { id: 'ownership', icon: <Users size={15} />, label: 'Player Ownership', onClick: () => managerOwnership.length > 0 ? setDashboardTab('ownership') : handleViewManagerInsights('ownership') },
                 { id: 'tendencies', icon: <Sparkles size={15} />, label: 'AI Tendencies', onClick: () => managerOwnership.length > 0 ? setDashboardTab('tendencies') : handleViewManagerInsights('tendencies') },
                 { id: 'owner-position', icon: <Target size={15} />, label: 'Owner Position', onClick: () => setDashboardTab('owner-position') },
+                { id: 'keepers', icon: <Shield size={15} />, label: 'Keepers', onClick: () => { setDashboardTab('keepers'); handleLoadKeepers(); } },
               ] as const).map(({ id, icon, label, onClick, badge }: any) => {
                 const active = dashboardTab === id;
                 return (
@@ -945,6 +962,26 @@ const App: React.FC = () => {
                   </div>
                 </div>
                 <DraftResults draftSeasons={draftData} loading={draftLoading} />
+              </div>
+            )}
+
+            {/* Keepers Tab */}
+            {dashboardTab === 'keepers' && (
+              <div className="pt-2">
+                <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', marginBottom: '1.5rem' }}>
+                  <div style={{ padding: '0.75rem', background: 'var(--gold-dim)', border: '1px solid rgba(212,160,23,0.2)', borderRadius: '8px' }}>
+                    <Shield style={{ color: 'var(--gold)' }} size={22} />
+                  </div>
+                  <div>
+                    <h2 style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: '1.6rem', letterSpacing: '0.08em', color: 'var(--text-primary)', margin: 0, textTransform: 'uppercase' }}>
+                      {keeperSummary?.upcomingYear ? `${keeperSummary.upcomingYear} Keepers` : 'Keepers'}
+                    </h2>
+                    <p style={{ color: 'var(--text-secondary)', fontSize: '0.8rem', margin: '0.2rem 0 0', fontFamily: "'Outfit', sans-serif" }}>
+                      Designated keepers for the upcoming draft — mark picks in Draft History to add them here
+                    </p>
+                  </div>
+                </div>
+                <KeeperBoard summary={keeperSummary} loading={keeperLoading} leagueKey={selectedLeague?.id || ''} onRefresh={handleLoadKeepers} />
               </div>
             )}
 
