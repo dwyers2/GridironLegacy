@@ -115,6 +115,27 @@ export interface KeeperSummary {
   upcomingYear: string | null;
   managers: ManagerKeepers[];
   leagueKey?: string;
+  /** Players kept INTO the current season (from prior-year designations) */
+  keptIntoCurrentSeason?: Array<{ playerName: string; timesKept: number }>;
+}
+
+export interface RosterPlayer {
+  playerKey: string;
+  playerName: string;
+  position: string;
+  nflTeam: string;
+  acquisitionType: 'draft' | 'freeagent' | 'waivers' | 'trade' | string;
+  acquisitionDate: string | null;
+  isOnIR: boolean;
+  isKeeperIneligible?: boolean;
+}
+
+export interface TeamRoster {
+  teamKey: string;
+  teamName: string;
+  managerName: string;
+  managerId?: string;
+  players: RosterPlayer[];
 }
 
 export enum AppState {

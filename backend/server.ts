@@ -662,6 +662,144 @@ app.post('/api/cache/tendencies', (req, res) => {
   }
 });
 
+// Save current roster snapshot (with acquisition data) for a league
+app.post('/api/cache/current-rosters', (req, res) => {
+  try {
+    const { leagueKey, season, entries } = req.body;
+    if (!leagueKey || !season || !Array.isArray(entries)) {
+      return res.status(400).json({ error: 'leagueKey, season, and entries[] required' });
+    }
+
+    // Ensure all referenced players exist in the players table
+    for (const e of entries) {
+      if (e.playerName && e.playerId) {
+        db.cachePlayer(e.playerId, e.playerName, e.position || '', e.nflTeam || '');
+      }
+    }
+
+    // Compute is_keeper_ineligible once at save time so reads are instant
+    const tradeDeadline = db.getTradeDeadline(leagueKey);
+    const deadlineMs = tradeDeadline ? new Date(tradeDeadline + 'T23:59:59').getTime() : null;
+    const roundByPlayerId = db.getDraftRoundsForLeague(leagueKey);
+    const everKeptIds = db.getEverKeptPlayerIds();
+
+    const enriched = entries.map((e: any) => {
+      const draftRound = roundByPlayerId.get(e.playerId);
+      const wasEverKept = everKeptIds.has(e.playerId);
+      const isPostDeadline = !!deadlineMs && !!e.acquisitionDate
+        && (e.acquisitionType === 'freeagent' || e.acquisitionType === 'waivers')
+        && new Date(e.acquisitionDate).getTime() > deadlineMs;
+      const isTopRound = !wasEverKept && draftRound !== undefined && draftRound <= 4;
+      return { ...e, isKeeperIneligible: isPostDeadline || isTopRound };
+    });
+
+    db.saveCurrentRosters(leagueKey, season, enriched);
+    console.log(`💾 Saved current rosters for ${leagueKey} season ${season}: ${enriched.length} entries`);
+    res.json({ success: true, count: enriched.length });
+  } catch (err: any) {
+    console.error('Failed to save current rosters:', err);
+    res.status(500).json({ error: 'Failed to save current rosters', message: err.message });
+  }
+});
+
+// Store trade deadline for a league (called by frontend after fetching from Yahoo)
+app.post('/api/cache/trade-deadline', (req, res) => {
+  try {
+    const { leagueKey, raw } = req.body;
+    if (!leagueKey || !raw) return res.status(400).json({ error: 'leagueKey and raw required' });
+    db.setTradeDeadline(leagueKey, raw);
+    res.json({ ok: true });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Get cached current roster for a league — is_keeper_ineligible is a stored column, no computation here
+app.get('/api/cache/current-rosters/:leagueKey', (req, res) => {
+  try {
+    const { leagueKey } = req.params;
+    const season = (req.query.season as string) || new Date().getFullYear().toString();
+    const rows = db.getCachedCurrentRosters(leagueKey, season);
+    const cacheAge = db.getCurrentRosterCacheAge(leagueKey, season);
+
+    const teamsMap = new Map<string, any>();
+    for (const row of rows) {
+      if (!teamsMap.has(row.team_key)) {
+        teamsMap.set(row.team_key, {
+          teamKey: row.team_key,
+          teamName: row.team_name,
+          managerName: row.manager_name,
+          managerId: row.manager_id,
+          players: [],
+        });
+      }
+      teamsMap.get(row.team_key).players.push({
+        playerId: row.player_id,
+        playerName: row.player_name,
+        position: row.position,
+        nflTeam: row.nfl_team,
+        acquisitionType: row.acquisition_type,
+        acquisitionDate: row.acquisition_date,
+        isOnIR: row.is_on_ir === 1,
+        isKeeperIneligible: row.is_keeper_ineligible === 1,
+      });
+    }
+
+    res.json({
+      rosters: Array.from(teamsMap.values()),
+      cacheAge: cacheAge?.toISOString() || null,
+      season,
+    });
+  } catch (err: any) {
+    console.error('Failed to get current rosters:', err);
+    res.status(500).json({ error: 'Failed to get current rosters', message: err.message });
+  }
+});
+
+// Save a batch of transaction rows for a league
+app.post('/api/cache/transactions', (req, res) => {
+  try {
+    const { leagueKey, rows } = req.body;
+    if (!leagueKey || !Array.isArray(rows)) {
+      return res.status(400).json({ error: 'leagueKey and rows[] required' });
+    }
+    db.cacheTransactions(leagueKey, rows);
+    console.log(`💾 Cached ${rows.length} transactions for ${leagueKey}`);
+    res.json({ success: true, count: rows.length });
+  } catch (err: any) {
+    console.error('Failed to cache transactions:', err);
+    res.status(500).json({ error: 'Failed to cache transactions', message: err.message });
+  }
+});
+
+// Get cached transactions for a league/season
+app.get('/api/cache/transactions/:leagueKey', (req, res) => {
+  try {
+    const { leagueKey } = req.params;
+    const season = (req.query.season as string) || new Date().getFullYear().toString();
+    const rows = db.getTransactionsForLeague(leagueKey, season);
+    const count = db.getTransactionCount(leagueKey, season);
+    const latestTs = db.getLatestTransactionTimestamp(leagueKey, season);
+    res.json({ rows, count, latestTimestamp: latestTs, season });
+  } catch (err: any) {
+    console.error('Failed to get transactions:', err);
+    res.status(500).json({ error: 'Failed to get transactions', message: err.message });
+  }
+});
+
+// Look up acquisition info for a specific player+team
+app.get('/api/cache/transactions/:leagueKey/player/:playerKey', (req, res) => {
+  try {
+    const { leagueKey, playerKey } = req.params;
+    const teamKey = req.query.teamKey as string;
+    if (!teamKey) return res.status(400).json({ error: 'teamKey query param required' });
+    const acq = db.getPlayerAcquisition(playerKey, teamKey, leagueKey);
+    res.json({ acquisition: acq });
+  } catch (err: any) {
+    res.status(500).json({ error: 'Failed to get acquisition', message: err.message });
+  }
+});
+
 // Bulk resolve player names from player_keys
 app.post('/api/players/resolve', (req, res) => {
   try {
@@ -835,7 +973,22 @@ app.get('/api/keepers/summary/:leagueKey', (req, res) => {
     }
 
     const managers = Object.values(managerMap).sort((a: any, b: any) => a.managerName.localeCompare(b.managerName));
-    res.json({ upcomingYear, managers, leagueKey: mostRecentLeagueKey });
+
+    // Players kept INTO the current season (designated from the prior season)
+    // timesKept = consecutive years the player was kept, counting backwards from priorSeason
+    const priorSeason = String(Number(mostRecentSeason) - 1);
+    const getTimesKept = (playerKey: string): number => {
+      const kept = playerKeptSeasons[extractPlayerId(playerKey)] || new Set();
+      let count = 0;
+      let year = Number(priorSeason);
+      while (kept.has(year)) { count++; year--; }
+      return count;
+    };
+    const keptIntoCurrentSeason = allKeepers
+      .filter((k: any) => k.season === priorSeason)
+      .map((k: any) => ({ playerName: k.player_name as string, timesKept: getTimesKept(k.player_key) }));
+
+    res.json({ upcomingYear, managers, leagueKey: mostRecentLeagueKey, keptIntoCurrentSeason });
   } catch (err: any) {
     console.error('Failed to get keeper summary:', err);
     res.status(500).json({ error: 'Failed to get keeper summary', message: err.message });

@@ -456,7 +456,7 @@ const ManagerInsights: React.FC<ManagerInsightsProps> = ({
           }}>
             <p style={{
               color: 'var(--text-secondary)', fontFamily: "'Outfit', sans-serif",
-              fontStyle: 'italic', lineHeight: 1.65, fontSize: '0.875rem', margin: 0, fontWeight: 300,
+              fontStyle: 'italic', lineHeight: 1.65, fontSize: '0.875rem', margin: 0, fontWeight: 400,
             }}>"{tendency.analysis}"</p>
           </div>
         </div>
