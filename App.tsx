@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { AppState, League, PlayerStats, ManagerHistory, ManagerOwnershipData, ManagerTendency, FetchProgress, SeasonDraftData, KeeperSummary } from './types';
+import { AppState, League, PlayerStats, ManagerHistory, ManagerOwnershipData, ManagerTendency, FetchProgress, SeasonDraftData, KeeperSummary, TeamRoster } from './types';
 import * as yahooService from './services/yahooService';
 import * as geminiService from './services/geminiService';
 import ManagerInsights from './components/ManagerInsights';
@@ -8,13 +8,9 @@ import KeeperBoard from './components/KeeperBoard';
 import OwnerPositionGrid from './components/OwnerPositionGrid';
 import DynastyAlchemyLogo from './components/DynastyAlchemyLogo';
 import {
-  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
-  Cell, ScatterChart, Scatter, ZAxis
-} from 'recharts';
-import {
   LayoutDashboard, Users, Award,
   ChevronRight, ArrowLeft, LogOut, Loader2, Sparkles,
-  Trophy, TrendingUp, Info, ShieldAlert, BarChart3, ClipboardList, Target, Shield
+  Trophy, TrendingUp, ShieldAlert, ClipboardList, Target, Shield
 } from 'lucide-react';
 
 const App: React.FC = () => {
@@ -35,6 +31,11 @@ const App: React.FC = () => {
   const [keeperSummary, setKeeperSummary] = useState<KeeperSummary | null>(null);
   const [keeperLoading, setKeeperLoading] = useState(false);
   const [refreshingManagers, setRefreshingManagers] = useState<Set<string>>(new Set());
+  const [currentRosters, setCurrentRosters] = useState<TeamRoster[]>([]);
+  const [rosterLoading, setRosterLoading] = useState(false);
+  const [tradeDeadline, setTradeDeadline] = useState<string | null>(null);
+  const [rosterCacheAge, setRosterCacheAge] = useState<string | null>(null);
+  const [currentUserGuid, setCurrentUserGuid] = useState<string | null>(null);
 
   // ✅ Prevent double-processing with ref
   const isProcessingOAuth = useRef(false);
@@ -64,6 +65,7 @@ const App: React.FC = () => {
           if (fetchedLeagues && fetchedLeagues.length > 0) {
             setLeagues(fetchedLeagues);
             setCurrentStep(AppState.LEAGUE_SELECT);
+            yahooService.getCurrentUserGuid().then(guid => { if (guid) setCurrentUserGuid(guid); }).catch(() => {});
           } else {
             console.warn('No leagues returned from API');
             setError('No leagues found. Make sure you have active Yahoo Fantasy leagues.');
@@ -102,6 +104,7 @@ const App: React.FC = () => {
             setLeagues(fetchedLeagues);
             setCurrentStep(AppState.LEAGUE_SELECT);
             setError(null);
+            yahooService.getCurrentUserGuid().then(guid => { if (guid) setCurrentUserGuid(guid); }).catch(() => {});
           } else {
             console.warn('No leagues found after successful OAuth');
             setError('Authentication successful but no leagues found. Make sure you have active Yahoo Fantasy Football leagues.');
@@ -171,6 +174,14 @@ const App: React.FC = () => {
       setDashboardTab('overview');
       setCurrentStep(AppState.DASHBOARD);
 
+      // Auto-load keeper summary in the background
+      setKeeperLoading(true);
+      fetch(`/api/keepers/summary/${encodeURIComponent(league.id)}`)
+        .then(r => r.ok ? r.json() : null)
+        .then(data => { if (data) setKeeperSummary(data); })
+        .catch(() => {})
+        .finally(() => setKeeperLoading(false));
+
       // Kick off draft history fetch in the background (non-blocking)
       setDraftLoading(true);
       yahooService.getMultiSeasonDraftResults(league.id).then(data => {
@@ -179,6 +190,34 @@ const App: React.FC = () => {
         console.warn('Draft history fetch failed:', err);
       }).finally(() => {
         setDraftLoading(false);
+      });
+
+      // Kick off current roster fetch in the background
+      setRosterLoading(true);
+      setCurrentRosters([]);
+      setTradeDeadline(null);
+      // Load cached snapshot instantly, then fetch live data from Yahoo
+      yahooService.getCachedCurrentRosters(league.id).then(({ rosters, cacheAge }) => {
+        if (rosters.length > 0) {
+          setCurrentRosters(rosters);
+          setRosterCacheAge(cacheAge);
+        }
+      }).catch(() => {});
+      Promise.all([
+        yahooService.fetchCurrentRosters(league.id),
+        yahooService.fetchTradeDeadline(league.id),
+      ]).then(([rosters, deadline]) => {
+        // Only update if the live fetch returned actual players; never blank out the cache
+        const totalPlayers = rosters.reduce((n, t) => n + t.players.length, 0);
+        if (totalPlayers > 0) {
+          setCurrentRosters(rosters);
+          setRosterCacheAge(null);
+        }
+        if (deadline) setTradeDeadline(deadline.display);
+      }).catch(err => {
+        console.warn('Current roster fetch failed:', err);
+      }).finally(() => {
+        setRosterLoading(false);
       });
     } catch (err: any) {
       console.error('Failed to load league details:', err);
@@ -367,7 +406,7 @@ const App: React.FC = () => {
     if (!selectedLeague) return;
     setKeeperLoading(true);
     try {
-      const res = await fetch(`http://localhost:3001/api/keepers/summary/${encodeURIComponent(selectedLeague.id)}`);
+      const res = await fetch(`/api/keepers/summary/${encodeURIComponent(selectedLeague.id)}`);
       if (res.ok) setKeeperSummary(await res.json());
     } catch (e) {
       console.warn('Failed to load keeper summary:', e);
@@ -503,7 +542,7 @@ const App: React.FC = () => {
               {/* Tagline */}
               <p className="animate-fade-up-3" style={{
                 fontFamily: "'Outfit', sans-serif",
-                fontWeight: 300, fontSize: '1rem',
+                fontWeight: 400, fontSize: '1rem',
                 color: 'var(--text-secondary)',
                 maxWidth: '380px', lineHeight: 1.75,
                 letterSpacing: '0.015em', marginBottom: '2.5rem',
@@ -553,7 +592,7 @@ const App: React.FC = () => {
                 color: 'var(--text-muted)', letterSpacing: '0.07em',
                 fontFamily: "'Outfit', sans-serif",
               }}>
-                SECURE OAUTH 2.0 &nbsp;·&nbsp; READ-ONLY &nbsp;·&nbsp; NO DATA STORED
+                SECURE OAUTH 2.0 &nbsp;·&nbsp; READ-ONLY &nbsp;·&nbsp; NO USER DATA STORED
               </p>
             </div>
 
@@ -619,7 +658,7 @@ const App: React.FC = () => {
                     <p style={{
                       fontFamily: "'Outfit', sans-serif",
                       fontSize: '0.875rem', color: 'var(--text-secondary)',
-                      lineHeight: 1.65, fontWeight: 300, margin: 0,
+                      lineHeight: 1.65, fontWeight: 400, margin: 0,
                     }}>
                       {desc}
                     </p>
@@ -753,7 +792,7 @@ const App: React.FC = () => {
             {/* Tab Bar */}
             <div style={{ display: 'flex', gap: '0.25rem', borderBottom: '1px solid var(--border)', paddingBottom: 0 }}>
               {([
-                { id: 'overview', icon: <BarChart3 size={15} />, label: 'Overview', onClick: () => setDashboardTab('overview') },
+                { id: 'overview', icon: <Users size={15} />, label: 'Current Roster', onClick: () => setDashboardTab('overview') },
                 {
                   id: 'draft', icon: <ClipboardList size={15} />, label: 'Draft History', onClick: () => setDashboardTab('draft'),
                   badge: draftLoading
@@ -792,162 +831,187 @@ const App: React.FC = () => {
               })}
             </div>
 
-            {/* Overview Tab */}
-            {dashboardTab === 'overview' && (
-              <>
-                {/* AI Insights Card */}
-                <div style={{
-                  position: 'relative', overflow: 'hidden',
-                  background: 'var(--surface)',
-                  border: '1px solid var(--border)',
-                  padding: '2.5rem', borderRadius: '12px',
-                }}>
-                  {/* Background glow */}
-                  <div style={{
-                    position: 'absolute', top: '-60px', right: '-60px',
-                    width: '300px', height: '300px',
-                    background: 'radial-gradient(circle, rgba(212,160,23,0.07) 0%, transparent 70%)',
-                    pointerEvents: 'none',
-                  }} />
-                  <div style={{ position: 'absolute', top: '1.5rem', right: '1.5rem', opacity: 0.06, pointerEvents: 'none' }}>
-                    <Sparkles size={100} style={{ color: 'var(--gold)' }} />
-                  </div>
-                  <div style={{ position: 'relative', zIndex: 1 }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '2rem' }}>
+            {/* Current Roster Tab */}
+            {dashboardTab === 'overview' && (() => {
+              const posColor: Record<string, string> = {
+                QB: '#D4A017', RB: '#22A85F', WR: '#3B82F6', TE: '#A855F7',
+                K: '#6B7280', DEF: '#6B7280', 'D/ST': '#6B7280',
+              };
+              const acqColor: Record<string, { bg: string; text: string; label: string }> = {
+                draft:      { bg: 'rgba(212,160,23,0.12)',  text: '#D4A017', label: 'DRAFT' },
+                freeagent:  { bg: 'rgba(59,130,246,0.12)',  text: '#3B82F6', label: 'FA' },
+                waivers:    { bg: 'rgba(6,182,212,0.12)',   text: '#06B6D4', label: 'WIRE' },
+                trade:      { bg: 'rgba(168,85,247,0.12)',  text: '#A855F7', label: 'TRADE' },
+              };
+
+              // Build draft round lookup from current season's draft data
+              const currentSeasonDraft = selectedLeague
+                ? draftData.find(d => d.leagueKey === selectedLeague.id)
+                : null;
+              const draftRoundByName = new Map<string, number>();
+              if (currentSeasonDraft) {
+                for (const pick of currentSeasonDraft.picks) {
+                  draftRoundByName.set(pick.playerName.toLowerCase(), pick.round);
+                }
+              }
+
+              // Build keeper map: playerName → timesKept (for players kept INTO this season)
+              const keeperTimesKept = new Map<string, number>();
+              for (const k of keeperSummary?.keptIntoCurrentSeason ?? []) {
+                keeperTimesKept.set(k.playerName.toLowerCase(), k.timesKept);
+              }
+              return (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+                  {/* Page header */}
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '1rem' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+                      <div style={{ padding: '0.75rem', background: 'var(--gold-dim)', border: '1px solid rgba(212,160,23,0.2)', borderRadius: '8px' }}>
+                        <Users style={{ color: 'var(--gold)' }} size={22} />
+                      </div>
+                      <div>
+                        <h2 style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: '1.6rem', letterSpacing: '0.08em', color: 'var(--text-primary)', margin: 0, textTransform: 'uppercase' }}>Current Rosters</h2>
+                        <p style={{ color: 'var(--text-secondary)', fontSize: '0.8rem', margin: '0.2rem 0 0', fontFamily: "'Outfit', sans-serif" }}>
+                          {rosterCacheAge
+                            ? `Cached · ${new Date(rosterCacheAge).toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}`
+                            : rosterLoading ? 'Fetching live rosters from Yahoo…' : 'Live data from Yahoo Fantasy'}
+                        </p>
+                      </div>
+                    </div>
+                    {/* Trade deadline badge */}
+                    {tradeDeadline && (
                       <div style={{
-                        padding: '0.5rem', background: 'var(--gold-dim)',
-                        border: '1px solid rgba(212,160,23,0.2)', borderRadius: '8px',
+                        display: 'flex', alignItems: 'center', gap: '0.6rem',
+                        padding: '0.6rem 1.1rem',
+                        background: 'rgba(224,82,82,0.08)', border: '1px solid rgba(224,82,82,0.25)',
+                        borderRadius: '6px',
                       }}>
-                        <Sparkles style={{ color: 'var(--gold)' }} size={20} />
+                        <div style={{ width: '7px', height: '7px', borderRadius: '50%', background: '#E05252', flexShrink: 0, boxShadow: '0 0 6px rgba(224,82,82,0.6)' }} />
+                        <span style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: '0.7rem', letterSpacing: '0.18em', color: '#E05252', textTransform: 'uppercase' }}>Trade Deadline</span>
+                        <span style={{ fontFamily: "'Outfit', sans-serif", fontSize: '0.875rem', color: 'var(--text-primary)', fontWeight: 500 }}>{tradeDeadline}</span>
                       </div>
-                      <h2 style={{
-                        fontFamily: "'Barlow Condensed', sans-serif",
-                        fontWeight: 700, fontSize: '1.1rem', letterSpacing: '0.14em',
-                        color: 'var(--text-primary)', margin: 0, textTransform: 'uppercase',
-                      }}>AI Scouter's Legacy Report</h2>
-                    </div>
-                    <div className="grid md:grid-cols-3 gap-8">
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                          <div style={{ width: '22px', height: '22px', borderRadius: '50%', background: 'rgba(34,168,95,0.15)', border: '1px solid rgba(34,168,95,0.3)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                            <Trophy size={11} style={{ color: 'var(--green)' }} />
-                          </div>
-                          <div style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: '0.65rem', letterSpacing: '0.18em', color: 'var(--gold)', textTransform: 'uppercase' }}>Stalwart Pick</div>
-                        </div>
-                        <p style={{ fontSize: '1rem', color: 'var(--text-primary)', fontFamily: "'Outfit', sans-serif", margin: 0, lineHeight: 1.5 }}>{aiInsights?.frequentPick || "Analyzing rosters..."}</p>
-                      </div>
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', borderLeft: '1px solid var(--border)', paddingLeft: '2rem' }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                          <div style={{ width: '22px', height: '22px', borderRadius: '50%', background: 'rgba(224,82,82,0.12)', border: '1px solid rgba(224,82,82,0.3)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                            <TrendingUp size={11} style={{ color: 'var(--red)' }} />
-                          </div>
-                          <div style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: '0.65rem', letterSpacing: '0.18em', color: 'var(--gold)', textTransform: 'uppercase' }}>Efficiency Gap</div>
-                        </div>
-                        <p style={{ fontSize: '1rem', color: 'var(--text-primary)', fontFamily: "'Outfit', sans-serif", margin: 0, lineHeight: 1.5 }}>{aiInsights?.missedOpportunity || "Crunching stats..."}</p>
-                      </div>
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', borderLeft: '1px solid var(--border)', paddingLeft: '2rem' }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                          <div style={{ width: '22px', height: '22px', borderRadius: '50%', background: 'var(--gold-dim)', border: '1px solid rgba(212,160,23,0.25)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                            <Award size={11} style={{ color: 'var(--gold)' }} />
-                          </div>
-                          <div style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: '0.65rem', letterSpacing: '0.18em', color: 'var(--gold)', textTransform: 'uppercase' }}>The Nemesis</div>
-                        </div>
-                        <p style={{ fontSize: '1rem', color: 'var(--text-primary)', fontFamily: "'Outfit', sans-serif", margin: 0, lineHeight: 1.5 }}>{aiInsights?.rivalJewel || "Identifying rivals..."}</p>
-                      </div>
-                    </div>
-                    <div style={{ marginTop: '2rem', paddingTop: '1.75rem', borderTop: '1px solid var(--border)' }}>
-                      <div style={{ fontSize: '1.1rem', fontWeight: 300, color: 'var(--text-secondary)', fontStyle: 'italic', lineHeight: 1.7, fontFamily: "'Outfit', sans-serif" }}>
-                        "{aiInsights?.summary || "Deep-diving into league history to reveal your management identity..."}"
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Charts Row */}
-                <div className="grid lg:grid-cols-2 gap-8">
-                  <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', padding: '2rem', borderRadius: '10px' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '2rem' }}>
-                      <h3 style={{
-                        fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700,
-                        fontSize: '1rem', letterSpacing: '0.14em', color: 'var(--text-primary)',
-                        display: 'flex', alignItems: 'center', gap: '0.6rem', margin: 0, textTransform: 'uppercase',
-                      }}>
-                        <div style={{ padding: '0.4rem', background: 'var(--gold-dim)', border: '1px solid rgba(212,160,23,0.18)', borderRadius: '6px' }}>
-                          <Users style={{ color: 'var(--gold)' }} size={16} />
-                        </div>
-                        Ownership Density
-                      </h3>
-                      <Info size={16} style={{ color: 'var(--text-muted)', cursor: 'help' }} />
-                    </div>
-                    <div className="h-80">
-                      <ResponsiveContainer width="100%" height="100%">
-                        <BarChart data={playerData} layout="vertical" margin={{ left: 20 }}>
-                          <CartesianGrid strokeDasharray="3 3" stroke="rgba(212,160,23,0.08)" horizontal={true} vertical={false} />
-                          <XAxis type="number" stroke="#3A4A62" axisLine={false} tickLine={false} fontSize={10} />
-                          <YAxis dataKey="name" type="category" stroke="#8A9BB5" width={100} fontSize={11} fontWeight="600" axisLine={false} tickLine={false} />
-                          <Tooltip
-                            contentStyle={{ backgroundColor: 'var(--surface-2)', border: '1px solid rgba(212,160,23,0.2)', borderRadius: '8px', padding: '10px 14px', boxShadow: '0 8px 24px rgba(0,0,0,0.4)' }}
-                            itemStyle={{ color: 'var(--text-primary)', fontSize: '12px' }}
-                            cursor={{ fill: 'rgba(212,160,23,0.06)' }}
-                          />
-                          <Legend verticalAlign="top" align="right" iconType="circle" wrapperStyle={{ color: 'var(--text-secondary)', fontSize: '12px' }} />
-                          <Bar dataKey="ownedByMeCount" name="Your Teams" fill="#D4A017" radius={[0, 6, 6, 0]} barSize={16} />
-                          <Bar dataKey="ownedByOthersCount" name="Opponents" fill="#3A4A62" radius={[0, 6, 6, 0]} barSize={16} />
-                        </BarChart>
-                      </ResponsiveContainer>
-                    </div>
+                    )}
                   </div>
 
-                  <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', padding: '2rem', borderRadius: '10px' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '2rem' }}>
-                      <h3 style={{
-                        fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700,
-                        fontSize: '1rem', letterSpacing: '0.14em', color: 'var(--text-primary)',
-                        display: 'flex', alignItems: 'center', gap: '0.6rem', margin: 0, textTransform: 'uppercase',
-                      }}>
-                        <div style={{ padding: '0.4rem', background: 'rgba(34,168,95,0.1)', border: '1px solid rgba(34,168,95,0.2)', borderRadius: '6px' }}>
-                          <TrendingUp style={{ color: 'var(--green)' }} size={16} />
+                  {/* Loading skeleton */}
+                  {rosterLoading && currentRosters.length === 0 && (
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '1rem' }}>
+                      {[...Array(6)].map((_, i) => (
+                        <div key={i} style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: '10px', padding: '1.5rem', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                          <div style={{ height: '1.1rem', width: '55%', background: 'rgba(255,255,255,0.06)', borderRadius: '4px' }} />
+                          {[...Array(8)].map((_, j) => (
+                            <div key={j} style={{ height: '0.85rem', width: `${70 + (j % 3) * 10}%`, background: 'rgba(255,255,255,0.04)', borderRadius: '3px' }} />
+                          ))}
                         </div>
-                        Management Precision
-                      </h3>
-                      <Info size={16} style={{ color: 'var(--text-muted)', cursor: 'help' }} />
+                      ))}
                     </div>
-                    <div className="h-80">
-                      <ResponsiveContainer width="100%" height="100%">
-                        <ScatterChart margin={{ top: 20, right: 20, bottom: 20, left: 20 }}>
-                          <CartesianGrid stroke="rgba(212,160,23,0.08)" strokeDasharray="5 5" />
-                          <XAxis type="number" dataKey="avgPointsBenched" name="Avg Bench Pts" unit=" pts" stroke="#3A4A62" axisLine={false} tickLine={false} fontSize={10} label={{ value: 'Efficiency Penalty (Bench Pts)', position: 'insideBottom', offset: -10, fill: '#3A4A62', fontSize: 10 }} />
-                          <YAxis type="number" dataKey="avgPointsStarted" name="Avg Start Pts" unit=" pts" stroke="#3A4A62" axisLine={false} tickLine={false} fontSize={10} label={{ value: 'Start Success', angle: -90, position: 'insideLeft', fill: '#3A4A62', fontSize: 10 }} />
-                          <ZAxis type="number" range={[100, 1000]} />
-                          <Tooltip
-                            cursor={{ strokeDasharray: '3 3', stroke: 'rgba(212,160,23,0.3)' }}
-                            content={({ active, payload }) => {
-                              if (active && payload && payload.length) {
-                                const data = payload[0].payload;
-                                return (
-                                  <div style={{ background: 'var(--surface-2)', border: '1px solid rgba(212,160,23,0.2)', padding: '0.75rem 1rem', borderRadius: '8px', boxShadow: '0 8px 24px rgba(0,0,0,0.4)' }}>
-                                    <p style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, color: 'var(--gold)', margin: '0 0 0.25rem', letterSpacing: '0.05em' }}>{data.name}</p>
-                                    <p style={{ fontSize: '0.8rem', color: 'var(--text-primary)', margin: '0.1rem 0', fontFamily: "'Outfit', sans-serif" }}>Started: {data.avgPointsStarted} pts</p>
-                                    <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', margin: 0, fontFamily: "'Outfit', sans-serif" }}>Benched: {data.avgPointsBenched} pts</p>
-                                  </div>
-                                );
+                  )}
+
+                  {/* Roster grid */}
+                  {currentRosters.length > 0 && (
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(310px, 1fr))', gap: '1rem', alignItems: 'start' }}>
+                      {[...currentRosters].sort((a, b) => {
+                        const aIsMe = currentUserGuid && a.managerId === currentUserGuid ? -1 : 0;
+                        const bIsMe = currentUserGuid && b.managerId === currentUserGuid ? -1 : 0;
+                        return aIsMe - bIsMe;
+                      }).map(team => (
+                        <div key={team.teamKey} style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: '10px', overflow: 'hidden' }}>
+                          {/* Team header */}
+                          <div style={{ padding: '1rem 1.25rem', borderBottom: '1px solid var(--border)', background: 'var(--surface-2)' }}>
+                            <div style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: '1rem', letterSpacing: '0.08em', color: 'var(--text-primary)', textTransform: 'uppercase' }}>{team.managerName}</div>
+                            <div style={{ fontFamily: "'Outfit', sans-serif", fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '0.15rem' }}>{team.teamName}</div>
+                          </div>
+
+                          {/* Player list */}
+                          <div style={{ padding: '0.5rem 0' }}>
+                            {team.players.length === 0 && (
+                              <div style={{ padding: '1rem 1.25rem', color: 'var(--text-muted)', fontSize: '0.8rem', fontFamily: "'Outfit', sans-serif" }}>No players found</div>
+                            )}
+                            {team.players.map((player, idx) => {
+                              const isIRDivider = idx > 0 && player.isOnIR && !team.players[idx - 1].isOnIR;
+                              const nameLower = player.playerName.toLowerCase();
+                              const timesKept = keeperTimesKept.get(nameLower) ?? 0;
+                              const draftRound = draftRoundByName.get(nameLower);
+
+                              const isKeeperIneligible = player.isKeeperIneligible ?? false;
+
+                              // Determine acquisition badge
+                              let acqBadge: { bg: string; text: string; label: string };
+                              if (timesKept > 0 || player.acquisitionType === 'draft' || (!player.acquisitionDate && draftRound)) {
+                                // Show round instead of generic DRAFT
+                                acqBadge = draftRound
+                                  ? { bg: 'rgba(212,160,23,0.12)', text: '#D4A017', label: `RND ${draftRound}` }
+                                  : { bg: 'rgba(212,160,23,0.12)', text: '#D4A017', label: 'DRAFT' };
+                              } else {
+                                acqBadge = acqColor[player.acquisitionType] || { bg: 'rgba(255,255,255,0.06)', text: 'var(--text-muted)', label: player.acquisitionType?.toUpperCase() || '—' };
                               }
-                              return null;
-                            }}
-                          />
-                          <Scatter name="Players" data={playerData}>
-                            {playerData.map((entry, index) => (
-                              <Cell key={`cell-${index}`} fill={entry.avgPointsStarted > 20 ? '#22A85F' : '#E05252'} stroke="rgba(12,15,22,0.8)" strokeWidth={2} />
-                            ))}
-                          </Scatter>
-                        </ScatterChart>
-                      </ResponsiveContainer>
+
+                              const posClr = posColor[player.position] || '#6B7280';
+                              return (
+                                <React.Fragment key={player.playerKey}>
+                                  {isIRDivider && (
+                                    <div style={{ margin: '0.25rem 1.25rem', borderTop: '1px dashed rgba(224,82,82,0.3)', display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.4rem 0 0.25rem' }}>
+                                      <span style={{ fontFamily: "'Barlow Condensed', sans-serif", fontSize: '0.6rem', letterSpacing: '0.18em', color: '#E05252', fontWeight: 700 }}>IR</span>
+                                    </div>
+                                  )}
+                                  <div style={{
+                                    display: 'grid',
+                                    gridTemplateColumns: '28px 1fr auto',
+                                    alignItems: 'center',
+                                    gap: '0.5rem',
+                                    padding: '0.45rem 1.25rem',
+                                    opacity: player.isOnIR ? 0.55 : 1,
+                                    background: isKeeperIneligible ? 'rgba(224,82,82,0.08)' : undefined,
+                                    borderLeft: isKeeperIneligible ? '2px solid rgba(224,82,82,0.4)' : '2px solid transparent',
+                                  }}>
+                                    {/* Position badge */}
+                                    <div style={{
+                                      fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700,
+                                      fontSize: '0.6rem', letterSpacing: '0.06em',
+                                      color: posClr, textAlign: 'center',
+                                      background: `${posClr}18`, border: `1px solid ${posClr}35`,
+                                      borderRadius: '3px', padding: '0.1rem 0',
+                                    }}>{player.position || '—'}</div>
+
+                                    {/* Name + team + date */}
+                                    <div style={{ minWidth: 0 }}>
+                                      <div style={{ fontFamily: "'Outfit', sans-serif", fontWeight: 600, fontSize: '0.875rem', color: 'var(--text-primary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
+                                        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{player.playerName}</span>
+                                        {timesKept > 0 && <span title={`Kept ${timesKept} year${timesKept > 1 ? 's' : ''}`} style={{ fontSize: '0.7rem', flexShrink: 0, letterSpacing: '-0.05em' }}>{'⭐'.repeat(Math.min(timesKept, 3))}</span>}
+                                      </div>
+                                      <div style={{ fontFamily: "'Outfit', sans-serif", fontSize: '0.7rem', color: 'var(--text-muted)', display: 'flex', gap: '0.35rem', alignItems: 'center', marginTop: '0.05rem' }}>
+                                        <span>{player.nflTeam || '—'}</span>
+                                        {player.acquisitionDate && <><span style={{ opacity: 0.35 }}>·</span><span>{player.acquisitionDate}</span></>}
+                                      </div>
+                                    </div>
+
+                                    {/* Acquisition type badge */}
+                                    <div style={{
+                                      fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700,
+                                      fontSize: '0.58rem', letterSpacing: '0.1em',
+                                      color: acqBadge.text, background: acqBadge.bg,
+                                      padding: '0.15rem 0.45rem', borderRadius: '3px',
+                                      whiteSpace: 'nowrap', flexShrink: 0,
+                                    }}>{acqBadge.label}</div>
+                                  </div>
+                                </React.Fragment>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      ))}
                     </div>
-                  </div>
+                  )}
+
+                  {/* Empty state */}
+                  {!rosterLoading && currentRosters.length === 0 && (
+                    <div style={{ padding: '4rem 2rem', textAlign: 'center', color: 'var(--text-muted)', fontFamily: "'Outfit', sans-serif" }}>
+                      <Users size={40} style={{ opacity: 0.2, marginBottom: '1rem' }} />
+                      <p style={{ margin: 0 }}>Roster data unavailable — try refreshing the page</p>
+                    </div>
+                  )}
                 </div>
-                
-              </>
-            )}
+              );
+            })()}
 
             {/* Draft History Tab */}
             {dashboardTab === 'draft' && (

@@ -1,6 +1,6 @@
-import { League, PlayerStats, ManagerHistory, SeasonRosterData, TeamInfo, ManagerOwnershipData, PlayerOwnership, FetchProgress, DraftPick, SeasonDraftData } from '../types';
+import { League, PlayerStats, ManagerHistory, SeasonRosterData, TeamInfo, ManagerOwnershipData, PlayerOwnership, FetchProgress, DraftPick, SeasonDraftData, RosterPlayer, TeamRoster } from '../types';
 
-const BACKEND_URL = 'http://localhost:3001/api';
+const BACKEND_URL = '/api';
 
 // NFL Fantasy Football Game IDs by year (code: "nfl")
 // Note: Some IDs like 416 are "nfls" (Survivor), not regular fantasy
@@ -1394,4 +1394,474 @@ export const getMultiSeasonDraftResults = async (
   // Sort by season descending (most recent first)
   results.sort((a, b) => Number(b.season) - Number(a.season));
   return results;
+};
+
+// ─── Transaction cache ─────────────────────────────────────────────────────
+
+// Parse the Yahoo transactions API response page into flat row objects.
+// Yahoo wraps each transaction as:
+//   transactions["0"] = { transaction: [ {meta}, { players: { "0": { player: [...] }, count } } ] }
+const parseTransactionPage = (data: any, season: string): Array<{
+  transaction_key: string; season: string; type: string; source_type: string | null;
+  player_key: string; player_id: string | null; player_name: string | null;
+  team_key: string | null; timestamp: number;
+}> => {
+  const rows: any[] = [];
+  const league = data?.fantasy_content?.league;
+  if (!Array.isArray(league)) return rows;
+
+  const txWrapper = league[1]?.transactions;
+  if (!txWrapper) return rows;
+
+  const count: number = txWrapper.count || 0;
+  for (let i = 0; i < count; i++) {
+    const txEntry = txWrapper[String(i)];
+    if (!txEntry?.transaction) continue;
+
+    const [meta, body] = txEntry.transaction as [any, any];
+    if (!meta || !body) continue;
+
+    const txKey: string = meta.transaction_key || '';
+    const txType: string = meta.type || '';          // 'add/drop', 'trade', 'commissioner'
+    const ts: number = parseInt(meta.timestamp || '0', 10);
+    const playersWrapper = body?.players;
+    if (!playersWrapper) continue;
+
+    const pCount: number = playersWrapper.count || 0;
+    for (let j = 0; j < pCount; j++) {
+      const pw = playersWrapper[String(j)];
+      if (!pw?.player) continue;
+
+      const playerInfoArr: any[] = Array.isArray(pw.player[0]) ? pw.player[0] : [];
+      const pInfo: any = {};
+      for (const item of playerInfoArr) {
+        if (item && typeof item === 'object') Object.assign(pInfo, item);
+      }
+
+      const txDataRaw = pw.player[1]?.transaction_data;
+      if (!txDataRaw) continue;
+
+      // add/drop transactions: transaction_data is a single object
+      // trade transactions:    transaction_data is an array [{add side}, {drop side}]
+      const txDataItems: any[] = Array.isArray(txDataRaw) ? txDataRaw : [txDataRaw];
+
+      const playerKeyFull: string = pInfo.player_key || '';
+      const keyMatch = playerKeyFull.match(/\.p\.(\d+)$/);
+      const playerId: string | null = keyMatch ? keyMatch[1] : null;
+      const playerName: string | null = pInfo.name?.full || null;
+
+      for (const txData of txDataItems) {
+        const playerType: string = txData.type || '';
+        const sourceType: string | null = txData.source_type || null;
+        const destTeamKey: string | null = txData.destination_team_key || null;
+        const srcTeamKey: string | null = txData.source_team_key || null;
+
+        if (txType === 'trade') {
+          // Yahoo sends each trade player ONCE with both source and destination keys.
+          // Emit both sides so we can look up who received the player.
+          if (destTeamKey) {
+            rows.push({ transaction_key: txKey, season, type: 'trade_add', source_type: 'team',
+              player_key: playerKeyFull, player_id: playerId, player_name: playerName,
+              team_key: destTeamKey, timestamp: ts });
+          }
+          if (srcTeamKey) {
+            rows.push({ transaction_key: txKey, season, type: 'trade_drop', source_type: 'team',
+              player_key: playerKeyFull, player_id: playerId, player_name: playerName,
+              team_key: srcTeamKey, timestamp: ts });
+          }
+        } else {
+          rows.push({
+            transaction_key: txKey, season,
+            type: playerType, // 'add' or 'drop'
+            source_type: sourceType,
+            player_key: playerKeyFull, player_id: playerId, player_name: playerName,
+            team_key: playerType === 'add' ? destTeamKey : srcTeamKey,
+            timestamp: ts,
+          });
+        }
+      }
+    }
+  }
+  return rows;
+};
+
+// Fetch ALL transactions for a league in a given season, paginating 25 at a time.
+// Persists every page to the DB immediately (INSERT OR IGNORE — safe to re-run).
+export const fetchAndCacheTransactions = async (
+  leagueKey: string,
+  season: string,
+  onProgress?: (fetched: number) => void
+): Promise<number> => {
+  const token = await getAccessToken();
+  if (!token) throw new Error('No access token');
+
+  const PAGE_SIZE = 25;
+  let start = 0;
+  let totalFetched = 0;
+
+  console.log(`📋 Fetching transactions for ${leagueKey} season ${season}…`);
+
+  while (true) {
+    // Fetch all transaction types — Yahoo's combined type is "add/drop", not separate "add,drop"
+    // Filter to relevant types in parseTransactionPage instead of on the URL
+    const url = `${BACKEND_URL}/yahoo/league/${leagueKey}/transactions?start=${start}&count=${PAGE_SIZE}`;
+    const res = await fetch(url, { headers: { 'Authorization': `Bearer ${token}` } });
+    if (!res.ok) {
+      console.warn(`  ⚠️ Transactions fetch failed at start=${start}: ${res.status}`);
+      break;
+    }
+
+    const data = await res.json();
+
+    // Log first page to confirm structure
+    if (start === 0) {
+      console.log('[tx debug] raw response keys:', JSON.stringify(Object.keys(data?.fantasy_content?.league?.[1] ?? {})));
+      const sample = data?.fantasy_content?.league?.[1]?.transactions;
+      console.log('[tx debug] transactions wrapper keys:', JSON.stringify(Object.keys(sample ?? {})));
+      console.log('[tx debug] first entry:', JSON.stringify(sample?.['0'])?.substring(0, 400));
+    }
+
+    // How many transaction *headers* did Yahoo return for this page?
+    const leagueArr = data?.fantasy_content?.league;
+    const txCount: number = Array.isArray(leagueArr)
+      ? (leagueArr[1]?.transactions?.count || 0)
+      : 0;
+
+    if (txCount === 0) break; // no more transactions
+
+    const rows = parseTransactionPage(data, season);
+
+    if (rows.length > 0) {
+      await fetch(`${BACKEND_URL}/cache/transactions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ leagueKey, rows }),
+      });
+      totalFetched += rows.length;
+      onProgress?.(totalFetched);
+      console.log(`  📋 Transactions: ${totalFetched} player-legs cached so far…`);
+    }
+
+    if (txCount < PAGE_SIZE) break; // last page
+
+    start += PAGE_SIZE;
+    if (start > 2500) break; // safety ceiling for very active leagues
+  }
+
+  console.log(`  ✅ Transactions complete: ${totalFetched} rows cached for ${leagueKey}`);
+  return totalFetched;
+};
+
+// Build a lookup map { "playerKey|teamKey" → { type, source_type, timestamp } }
+// from cached transaction data (fetched from the DB endpoint)
+export const buildAcquisitionMap = async (
+  leagueKey: string,
+  season: string
+): Promise<Map<string, { type: string; source_type: string | null; timestamp: number }>> => {
+  const res = await fetch(`${BACKEND_URL}/cache/transactions/${leagueKey}?season=${season}`);
+  const map = new Map<string, { type: string; source_type: string | null; timestamp: number }>();
+  if (!res.ok) return map;
+
+  const data = await res.json();
+  const rows: Array<{
+    player_key: string; player_id: string | null; team_key: string | null;
+    type: string; source_type: string | null; timestamp: number;
+  }> = data.rows || [];
+
+  // Keep only "add" legs (add / trade_add) — newest first within each player+team
+  for (const row of rows) {
+    if (row.type !== 'add' && row.type !== 'trade_add') continue;
+    if (!row.team_key) continue;
+    const key = `${row.player_key}|${row.team_key}`;
+    const existing = map.get(key);
+    if (!existing || row.timestamp > existing.timestamp) {
+      map.set(key, { type: row.type, source_type: row.source_type, timestamp: row.timestamp });
+    }
+    // Also index by numeric player_id for cross-reference
+    if (row.player_id) {
+      const idKey = `${row.player_id}|${row.team_key}`;
+      const existingId = map.get(idKey);
+      if (!existingId || row.timestamp > existingId.timestamp) {
+        map.set(idKey, { type: row.type, source_type: row.source_type, timestamp: row.timestamp });
+      }
+    }
+  }
+
+  return map;
+};
+
+// ─── Current Roster helpers ────────────────────────────────────────────────
+
+// Parse a Yahoo player array (from roster context) into a structured object.
+// player[0] = array of field objects; player[1] = { selected_position, ... }
+const parseRosterPlayer = (playerArray: any[]): RosterPlayer | null => {
+  const infoArr: any[] = Array.isArray(playerArray[0]) ? playerArray[0] : [];
+  const info: any = {};
+  for (const item of infoArr) {
+    if (item && typeof item === 'object') Object.assign(info, item);
+  }
+  if (!info.player_key) return null;
+
+  // player[1] holds per-roster metadata: selected_position, acquisition_type, etc.
+  const meta: any = playerArray[1] || {};
+  // Log first player's meta once to confirm Yahoo's actual field structure
+  if (info.player_key && (meta.acquisition_type || info.acquisition_type)) {
+    // field found — no-op
+  } else if (info.player_key) {
+    console.log(`[roster debug] player_key=${info.player_key} player[1] keys:`, Object.keys(meta));
+  }
+  // Yahoo puts acquisition_type in player[1]; it may also appear in the player[0] field array
+  const acqObj = meta.acquisition_type ?? info.acquisition_type;
+  const acqType: string = acqObj?.type || 'unknown';
+  let acquisitionDate: string | null = null;
+  const rawDate = acqObj?.date;
+  if (rawDate && rawDate !== '0' && rawDate !== 0) {
+    const epoch = typeof rawDate === 'string' ? parseInt(rawDate, 10) : rawDate;
+    if (!isNaN(epoch) && epoch > 0) {
+      acquisitionDate = new Date(epoch * 1000).toLocaleDateString('en-US', {
+        month: 'short', day: 'numeric', year: 'numeric',
+      });
+    }
+  }
+
+  // Selected position lives at player[1].selected_position[1].position
+  const selPosArr: any[] = meta.selected_position || [];
+  const selectedPos: string = selPosArr[1]?.position || '';
+  const isOnIR = selectedPos === 'IR';
+
+  // Extract player ID (numeric part of player_key "423.p.30977" → "30977")
+  const playerKeyMatch = (info.player_key as string).match(/\.p\.(\d+)$/);
+  const playerId = playerKeyMatch ? playerKeyMatch[1] : info.player_key;
+
+  return {
+    playerKey: info.player_key,
+    playerName: info.name?.full || '',
+    position: info.display_position || info.position_type || '',
+    nflTeam: info.editorial_team_abbr || '',
+    acquisitionType: acqType,
+    acquisitionDate,
+    isOnIR,
+    // Extra field used only for caching; stripped from RosterPlayer type
+    _playerId: playerId,
+  } as any;
+};
+
+// Fetch trade deadline from league settings
+export const fetchTradeDeadline = async (leagueKey: string): Promise<{ display: string; raw: string } | null> => {
+  const token = await getAccessToken();
+  if (!token) return null;
+  try {
+    const res = await fetch(`${BACKEND_URL}/yahoo/league/${leagueKey}/settings`, {
+      headers: { 'Authorization': `Bearer ${token}` },
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    const league = data?.fantasy_content?.league;
+    if (!Array.isArray(league)) return null;
+    const tradeEndDate: string | undefined = league[1]?.settings?.[0]?.trade_end_date;
+    if (!tradeEndDate) return null;
+    // "2025-11-03" → "November 3, 2025"
+    const d = new Date(tradeEndDate + 'T12:00:00');
+    const result = {
+      display: d.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }),
+      raw: tradeEndDate, // YYYY-MM-DD
+    };
+    // Persist so the server can use it for eligibility computation
+    fetch(`${BACKEND_URL}/cache/trade-deadline`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ leagueKey, raw: tradeEndDate }),
+    }).catch(() => {});
+    return result;
+  } catch {
+    return null;
+  }
+};
+
+// Resolve acquisition type label from transaction row type + source_type
+const resolveAcqType = (type: string, sourceType: string | null): RosterPlayer['acquisitionType'] => {
+  if (type === 'trade_add') return 'trade';
+  if (sourceType === 'waivers') return 'waivers';
+  if (sourceType === 'freeagents') return 'freeagent';
+  if (type === 'add') return 'freeagent'; // fallback for unlabelled adds
+  return type as any;
+};
+
+// Fetch all teams' current rosters.
+// Step 1: fetch & cache ALL transactions for the season from Yahoo.
+// Step 2: fetch each team's current roster from Yahoo.
+// Step 3: for every player, look up their most recent "add" transaction to
+//         determine the true acquisition date and method, overriding the
+//         often-stale value Yahoo returns on the roster endpoint.
+// Step 4: persist enriched roster snapshot to DB.
+export const fetchCurrentRosters = async (leagueKey: string): Promise<TeamRoster[]> => {
+  const token = await getAccessToken();
+  if (!token) throw new Error('No access token');
+
+  const currentSeason = new Date().getFullYear().toString();
+
+  // Short-circuit: if we already have a cached roster in the DB, return it.
+  // No need to re-fetch transactions or rosters from Yahoo every load.
+  const { rosters: cached } = await getCachedCurrentRosters(leagueKey);
+  const cachedPlayerCount = cached.reduce((n, t) => n + t.players.length, 0);
+  if (cachedPlayerCount > 0) {
+    console.log(`💾 Using cached current rosters (${cachedPlayerCount} players) — skipping Yahoo fetch`);
+    return cached;
+  }
+
+  // ── Step 1: transactions ─────────────────────────────────────────────────
+  console.log('📋 Fetching transactions…');
+  try {
+    await fetchAndCacheTransactions(leagueKey, currentSeason);
+  } catch (err) {
+    console.warn('Transaction fetch failed (continuing without):', err);
+  }
+
+  // Build the lookup map once (reads from DB cache)
+  const acqMap = await buildAcquisitionMap(leagueKey, currentSeason);
+  console.log(`  🗂 Acquisition map: ${acqMap.size} entries`);
+
+  // ── Step 2: teams list ───────────────────────────────────────────────────
+  const teamsRes = await fetch(`${BACKEND_URL}/yahoo/league/${leagueKey}/teams`, {
+    headers: { 'Authorization': `Bearer ${token}` },
+  });
+  if (!teamsRes.ok) throw new Error('Failed to fetch teams');
+
+  const teamsData = await teamsRes.json();
+  const leagueArr = teamsData?.fantasy_content?.league;
+  if (!Array.isArray(leagueArr)) return [];
+
+  const teamsWrapper = leagueArr[1]?.teams;
+  if (!teamsWrapper) return [];
+
+  const teamCount: number = teamsWrapper.count || 0;
+  const teamInfos: Array<{ teamKey: string; teamName: string; managerName: string; managerId: string }> = [];
+
+  for (let i = 0; i < teamCount; i++) {
+    const tw = teamsWrapper[i];
+    if (!tw?.team) continue;
+    const team = tw.team;
+    const infoArr: any[] = Array.isArray(team[0]) ? team[0] : [];
+    const info: any = {};
+    for (const item of infoArr) {
+      if (item && typeof item === 'object') Object.assign(info, item);
+    }
+    const mgr = info.managers?.[0]?.manager;
+    teamInfos.push({
+      teamKey: info.team_key || '',
+      teamName: info.name || 'Unknown Team',
+      managerName: mgr?.nickname || info.name || 'Unknown',
+      managerId: mgr?.guid || mgr?.manager_id || info.team_key || '',
+    });
+  }
+
+  // ── Step 3: rosters ──────────────────────────────────────────────────────
+  const results: TeamRoster[] = [];
+  const dbEntries: any[] = [];
+  const posOrder = ['QB', 'RB', 'WR', 'TE', 'FLEX', 'W/R/T', 'W/T', 'K', 'DEF', 'D/ST', 'BN', 'IR'];
+
+  for (const ti of teamInfos) {
+    try {
+      const rRes = await fetch(`${BACKEND_URL}/yahoo/team/${ti.teamKey}/roster`, {
+        headers: { 'Authorization': `Bearer ${token}` },
+      });
+      if (!rRes.ok) { results.push({ ...ti, players: [] }); continue; }
+
+      const rData = await rRes.json();
+      const teamArr = rData?.fantasy_content?.team;
+      const rosterWrapper = Array.isArray(teamArr) ? teamArr[1]?.roster : null;
+      const playersWrapper = rosterWrapper?.[0]?.players;
+      if (!playersWrapper) { results.push({ ...ti, players: [] }); continue; }
+
+      const playerCount: number = playersWrapper.count || 0;
+      const players: RosterPlayer[] = [];
+
+      for (let i = 0; i < playerCount; i++) {
+        const pw = playersWrapper[i];
+        if (!pw?.player) continue;
+        const parsed = parseRosterPlayer(pw.player) as any;
+        if (!parsed) continue;
+
+        // ── Step 3a: enrich with transaction data ──────────────────────────
+        // Try full player_key first, then numeric id — both keyed by team
+        const txByKey = acqMap.get(`${parsed.playerKey}|${ti.teamKey}`);
+        const txById  = acqMap.get(`${parsed._playerId}|${ti.teamKey}`);
+        const tx = txByKey || txById;
+
+        if (tx) {
+          parsed.acquisitionType = resolveAcqType(tx.type, tx.source_type);
+          parsed.acquisitionDate = new Date(tx.timestamp * 1000).toLocaleDateString('en-US', {
+            month: 'short', day: 'numeric', year: 'numeric',
+          });
+        }
+        // Drafted players often have tx.timestamp = 0 or no tx at all —
+        // keep the roster-endpoint value in that case (already set to 'draft' by Yahoo).
+
+        players.push(parsed as RosterPlayer);
+        dbEntries.push({
+          teamKey: ti.teamKey,
+          playerId: parsed._playerId,
+          playerName: parsed.playerName,
+          position: parsed.position,
+          nflTeam: parsed.nflTeam,
+          acquisitionType: parsed.acquisitionType !== 'unknown' ? parsed.acquisitionType : null,
+          acquisitionDate: parsed.acquisitionDate,
+          isOnIR: parsed.isOnIR,
+        });
+      }
+
+      players.sort((a, b) => {
+        if (a.isOnIR !== b.isOnIR) return a.isOnIR ? 1 : -1;
+        const ai = posOrder.indexOf(a.position);
+        const bi = posOrder.indexOf(b.position);
+        return (ai === -1 ? 99 : ai) - (bi === -1 ? 99 : bi);
+      });
+
+      results.push({ ...ti, players });
+    } catch (err) {
+      console.warn(`Roster fetch failed for ${ti.teamKey}:`, err);
+      results.push({ ...ti, players: [] });
+    }
+  }
+
+  // ── Step 4: persist enriched snapshot ────────────────────────────────────
+  if (dbEntries.length > 0) {
+    fetch(`${BACKEND_URL}/cache/current-rosters`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ leagueKey, season: currentSeason, entries: dbEntries }),
+    }).catch(err => console.warn('Failed to persist current rosters:', err));
+  }
+
+  return results.sort((a, b) => a.managerName.localeCompare(b.managerName));
+};
+
+// Get the GUID of the currently authenticated Yahoo user
+export const getCurrentUserGuid = async (): Promise<string | null> => {
+  const token = await getAccessToken();
+  if (!token) return null;
+  try {
+    const res = await fetch(`${BACKEND_URL}/yahoo/users;use_login=1`, {
+      headers: { 'Authorization': `Bearer ${token}` },
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    const user = data?.fantasy_content?.users?.[0]?.user;
+    if (!Array.isArray(user)) return null;
+    return user[0]?.guid || null;
+  } catch {
+    return null;
+  }
+};
+
+// Load cached current rosters from DB (no Yahoo call needed)
+export const getCachedCurrentRosters = async (leagueKey: string): Promise<{
+  rosters: TeamRoster[];
+  cacheAge: string | null;
+}> => {
+  const season = new Date().getFullYear().toString();
+  const res = await fetch(`${BACKEND_URL}/cache/current-rosters/${leagueKey}?season=${season}`);
+  if (!res.ok) return { rosters: [], cacheAge: null };
+  const data = await res.json();
+  return { rosters: data.rosters || [], cacheAge: data.cacheAge || null };
 };

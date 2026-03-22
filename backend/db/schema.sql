@@ -38,6 +38,9 @@ CREATE TABLE IF NOT EXISTS roster_entries (
   player_id TEXT NOT NULL,
   season TEXT NOT NULL,
   week INTEGER DEFAULT NULL, -- NULL means season roster, specific week for weekly rosters
+  acquisition_type TEXT DEFAULT NULL, -- 'draft', 'freeagent', 'waivers', 'trade'
+  acquisition_date TEXT DEFAULT NULL, -- ISO date string
+  is_on_ir INTEGER DEFAULT 0,
   last_updated DATETIME DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (team_key) REFERENCES teams(team_key),
   FOREIGN KEY (player_id) REFERENCES players(player_id),
@@ -110,6 +113,27 @@ CREATE TABLE IF NOT EXISTS manual_keepers (
   UNIQUE(league_key, team_key, player_name)
 );
 CREATE INDEX IF NOT EXISTS idx_manual_keepers_league ON manual_keepers(league_key);
+
+-- Transactions (add/drop/trade events for all seasons)
+-- One row per player-leg of a transaction (an add/drop pair = 2 rows)
+CREATE TABLE IF NOT EXISTS transactions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  league_key TEXT NOT NULL,
+  transaction_key TEXT NOT NULL,
+  season TEXT NOT NULL,
+  type TEXT NOT NULL,           -- 'add', 'drop', 'trade_add', 'trade_drop'
+  source_type TEXT,             -- 'freeagents', 'waivers', 'team' (trade source)
+  player_key TEXT NOT NULL,
+  player_id TEXT,
+  player_name TEXT,
+  team_key TEXT,                -- destination team (for adds), source team (for drops)
+  timestamp INTEGER NOT NULL,   -- Unix epoch seconds
+  last_updated DATETIME DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(transaction_key, player_key, type)
+);
+CREATE INDEX IF NOT EXISTS idx_transactions_league ON transactions(league_key);
+CREATE INDEX IF NOT EXISTS idx_transactions_player ON transactions(player_key, team_key);
+CREATE INDEX IF NOT EXISTS idx_transactions_season ON transactions(league_key, season);
 
 -- AI-generated manager tendencies (cached to avoid regenerating)
 CREATE TABLE IF NOT EXISTS manager_tendencies (

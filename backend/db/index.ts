@@ -13,6 +13,44 @@ db.pragma('journal_mode = WAL'); // Better concurrency
 export function initializeDatabase() {
   const schema = fs.readFileSync(SCHEMA_PATH, 'utf-8');
   db.exec(schema);
+
+  // Migrations: add new columns to existing tables if they don't exist yet
+  const rosterColumns = (db.pragma('table_info(roster_entries)') as any[]).map((c: any) => c.name);
+  if (!rosterColumns.includes('acquisition_type')) {
+    db.exec('ALTER TABLE roster_entries ADD COLUMN acquisition_type TEXT DEFAULT NULL');
+  }
+  if (!rosterColumns.includes('acquisition_date')) {
+    db.exec('ALTER TABLE roster_entries ADD COLUMN acquisition_date TEXT DEFAULT NULL');
+  }
+  if (!rosterColumns.includes('is_on_ir')) {
+    db.exec('ALTER TABLE roster_entries ADD COLUMN is_on_ir INTEGER DEFAULT 0');
+  }
+  if (!rosterColumns.includes('is_keeper_ineligible')) {
+    db.exec('ALTER TABLE roster_entries ADD COLUMN is_keeper_ineligible INTEGER DEFAULT 0');
+  }
+
+  // Create transactions table if it doesn't exist yet (for DBs created before this feature)
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS transactions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      league_key TEXT NOT NULL,
+      transaction_key TEXT NOT NULL,
+      season TEXT NOT NULL,
+      type TEXT NOT NULL,
+      source_type TEXT,
+      player_key TEXT NOT NULL,
+      player_id TEXT,
+      player_name TEXT,
+      team_key TEXT,
+      timestamp INTEGER NOT NULL,
+      last_updated DATETIME DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(transaction_key, player_key, type)
+    );
+    CREATE INDEX IF NOT EXISTS idx_transactions_league ON transactions(league_key);
+    CREATE INDEX IF NOT EXISTS idx_transactions_player ON transactions(player_key, team_key);
+    CREATE INDEX IF NOT EXISTS idx_transactions_season ON transactions(league_key, season);
+  `);
+
   console.log('✅ Database initialized');
 }
 
@@ -51,12 +89,102 @@ export function cachePlayer(playerId: string, playerName: string, position: stri
 }
 
 // Cache a roster entry
-export function cacheRosterEntry(teamKey: string, playerId: string, season: string, week: number | null = null) {
+export function cacheRosterEntry(
+  teamKey: string,
+  playerId: string,
+  season: string,
+  week: number | null = null,
+  acquisitionType: string | null = null,
+  acquisitionDate: string | null = null,
+  isOnIR: boolean = false
+) {
   const stmt = db.prepare(`
-    INSERT OR REPLACE INTO roster_entries (team_key, player_id, season, week, last_updated)
-    VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+    INSERT OR REPLACE INTO roster_entries (team_key, player_id, season, week, acquisition_type, acquisition_date, is_on_ir, last_updated)
+    VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
   `);
-  stmt.run(teamKey, playerId, season, week);
+  stmt.run(teamKey, playerId, season, week, acquisitionType, acquisitionDate, isOnIR ? 1 : 0);
+}
+
+// Bulk-save current roster entries (replaces prior current-roster snapshot for this season)
+export function saveCurrentRosters(
+  leagueKey: string,
+  season: string,
+  entries: Array<{
+    teamKey: string;
+    playerId: string;
+    acquisitionType: string | null;
+    acquisitionDate: string | null;
+    isOnIR: boolean;
+    isKeeperIneligible: boolean;
+  }>
+) {
+  const transaction = db.transaction(() => {
+    db.prepare(`
+      DELETE FROM roster_entries
+      WHERE season = ? AND week IS NULL
+        AND team_key IN (SELECT team_key FROM teams WHERE league_key = ?)
+    `).run(season, leagueKey);
+
+    const stmt = db.prepare(`
+      INSERT OR REPLACE INTO roster_entries
+        (team_key, player_id, season, week, acquisition_type, acquisition_date, is_on_ir, is_keeper_ineligible, last_updated)
+      VALUES (?, ?, ?, NULL, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+    `);
+    for (const e of entries) {
+      stmt.run(e.teamKey, e.playerId, season, e.acquisitionType, e.acquisitionDate, e.isOnIR ? 1 : 0, e.isKeeperIneligible ? 1 : 0);
+    }
+  });
+  transaction();
+}
+
+// Retrieve cached current roster for a league (week = NULL entries)
+export function getCachedCurrentRosters(leagueKey: string, season: string): Array<{
+  team_key: string;
+  manager_id: string;
+  manager_name: string;
+  team_name: string;
+  player_id: string;
+  player_name: string;
+  position: string;
+  nfl_team: string;
+  acquisition_type: string | null;
+  acquisition_date: string | null;
+  is_on_ir: number;
+  is_keeper_ineligible: number;
+  last_updated: string;
+}> {
+  return db.prepare(`
+    SELECT
+      re.team_key,
+      t.manager_id,
+      t.manager_name,
+      t.team_name,
+      re.player_id,
+      p.player_name,
+      p.position,
+      p.nfl_team,
+      re.acquisition_type,
+      re.acquisition_date,
+      re.is_on_ir,
+      re.is_keeper_ineligible,
+      re.last_updated
+    FROM roster_entries re
+    JOIN teams t ON re.team_key = t.team_key
+    JOIN players p ON re.player_id = p.player_id
+    WHERE t.league_key = ? AND re.season = ? AND re.week IS NULL
+    ORDER BY t.manager_name, re.is_on_ir, p.position, p.player_name
+  `).all(leagueKey, season) as any[];
+}
+
+// Get the timestamp of the most recently cached current roster for a league
+export function getCurrentRosterCacheAge(leagueKey: string, season: string): Date | null {
+  const result = db.prepare(`
+    SELECT MAX(re.last_updated) as last_updated
+    FROM roster_entries re
+    JOIN teams t ON re.team_key = t.team_key
+    WHERE t.league_key = ? AND re.season = ? AND re.week IS NULL
+  `).get(leagueKey, season) as { last_updated: string } | undefined;
+  return result?.last_updated ? new Date(result.last_updated) : null;
 }
 
 // Get all cached seasons for a manager
@@ -444,6 +572,37 @@ export function getKeeperSummaryForChain(chainLeagueKeys: string[]): Array<{
   `).all(...chainLeagueKeys) as any[];
 }
 
+// Draft round by numeric player_id for a given league (used for keeper eligibility)
+export function getDraftRoundsForLeague(leagueKey: string): Map<string, number> {
+  const rows = db.prepare(
+    `SELECT SUBSTR(player_key, INSTR(player_key, '.p.') + 3) as player_id, round FROM draft_picks WHERE league_key = ?`
+  ).all(leagueKey) as Array<{ player_id: string; round: number }>;
+  return new Map(rows.map(r => [r.player_id, r.round]));
+}
+
+// Set of player_ids ever designated as a keeper in any season (exempt from round restriction)
+export function getEverKeptPlayerIds(): Set<string> {
+  const rows = db.prepare(`
+    SELECT DISTINCT SUBSTR(dp.player_key, INSTR(dp.player_key, '.p.') + 3) as player_id
+    FROM keeper_designations kd
+    JOIN draft_picks dp ON kd.league_key = dp.league_key AND kd.pick = dp.pick
+  `).all() as Array<{ player_id: string }>;
+  return new Set(rows.map(r => r.player_id));
+}
+
+// Get cached trade deadline (YYYY-MM-DD) for a league, or null
+export function getTradeDeadline(leagueKey: string): string | null {
+  const row = db.prepare(`SELECT value FROM cache_metadata WHERE key = ?`)
+    .get(`trade_deadline:${leagueKey}`) as { value: string } | undefined;
+  return row?.value ?? null;
+}
+
+// Store trade deadline (YYYY-MM-DD) for a league
+export function setTradeDeadline(leagueKey: string, raw: string): void {
+  db.prepare(`INSERT OR REPLACE INTO cache_metadata (key, value, last_updated) VALUES (?, ?, CURRENT_TIMESTAMP)`)
+    .run(`trade_deadline:${leagueKey}`, raw);
+}
+
 // Get all keeper-designated pick numbers for a league
 export function getKeepersForLeague(leagueKey: string): number[] {
   return (db.prepare(`SELECT pick FROM keeper_designations WHERE league_key = ?`).all(leagueKey) as Array<{ pick: number }>).map(r => r.pick);
@@ -465,4 +624,81 @@ export function toggleKeeper(leagueKey: string, pick: number): boolean {
 export function runInTransaction<T>(fn: () => T): T {
   const transaction = db.transaction(fn);
   return transaction();
+}
+
+// ─── Yahoo Transaction Cache ──────────────────────────────────────────────
+
+export interface TransactionRow {
+  transaction_key: string;
+  season: string;
+  type: string;          // 'add', 'drop', 'trade_add', 'trade_drop'
+  source_type: string | null;
+  player_key: string;
+  player_id: string | null;
+  player_name: string | null;
+  team_key: string | null;
+  timestamp: number;
+}
+
+// Bulk-insert transaction rows; ignores duplicates
+export function cacheTransactions(leagueKey: string, rows: TransactionRow[]) {
+  if (rows.length === 0) return;
+  const stmt = db.prepare(`
+    INSERT OR IGNORE INTO transactions
+      (league_key, transaction_key, season, type, source_type, player_key, player_id, player_name, team_key, timestamp)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  const tx = db.transaction(() => {
+    for (const r of rows) {
+      stmt.run(leagueKey, r.transaction_key, r.season, r.type, r.source_type,
+        r.player_key, r.player_id, r.player_name, r.team_key, r.timestamp);
+    }
+  });
+  tx();
+}
+
+// Find the most recent "add" transaction for a player on a specific team
+export function getPlayerAcquisition(
+  playerKey: string,
+  teamKey: string,
+  leagueKey: string
+): { type: string; source_type: string | null; timestamp: number; player_name: string | null } | null {
+  // Normalise player_key: some roster entries use "423.p.30977", transactions may use the same
+  const row = db.prepare(`
+    SELECT type, source_type, timestamp, player_name
+    FROM transactions
+    WHERE league_key = ?
+      AND (player_key = ? OR player_id = ?)
+      AND team_key = ?
+      AND type IN ('add', 'trade_add')
+    ORDER BY timestamp DESC
+    LIMIT 1
+  `).get(leagueKey, playerKey, playerKey, teamKey) as any;
+  return row || null;
+}
+
+// Check how many transactions we have cached for a league/season
+export function getTransactionCount(leagueKey: string, season: string): number {
+  const r = db.prepare(`
+    SELECT COUNT(*) as cnt FROM transactions WHERE league_key = ? AND season = ?
+  `).get(leagueKey, season) as { cnt: number };
+  return r.cnt;
+}
+
+// Get the most-recent transaction timestamp cached for a league (for incremental fetching)
+export function getLatestTransactionTimestamp(leagueKey: string, season: string): number {
+  const r = db.prepare(`
+    SELECT MAX(timestamp) as ts FROM transactions WHERE league_key = ? AND season = ?
+  `).get(leagueKey, season) as { ts: number | null };
+  return r.ts || 0;
+}
+
+// Get all cached transactions for a league/season (newest first)
+export function getTransactionsForLeague(leagueKey: string, season: string): TransactionRow[] {
+  return db.prepare(`
+    SELECT transaction_key, season, type, source_type, player_key, player_id, player_name, team_key, timestamp
+    FROM transactions
+    WHERE league_key = ? AND season = ?
+    ORDER BY timestamp DESC
+  `).all(leagueKey, season) as TransactionRow[];
 }
