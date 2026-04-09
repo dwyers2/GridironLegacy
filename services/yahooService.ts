@@ -151,7 +151,7 @@ export const getLeagues = async (): Promise<any[]> => {
   // Correct Yahoo Fantasy API endpoint structure
   // Path: users;use_login=1/games;game_keys=nfl/leagues
   // This gets the current user's NFL leagues
-  const apiPath = 'users;use_login=1/games;game_keys=nfl/leagues';
+  const apiPath = 'users;use_login=1/games;game_codes=nfl/leagues';
   const url = `${BACKEND_URL}/yahoo/${apiPath}`;
 
   console.log('🔗 URL:', url);
@@ -270,10 +270,21 @@ export const getLeagues = async (): Promise<any[]> => {
     }
   }
 
-  console.log('📊 Total leagues found:', allLeagues.length);
-  console.log('📊 All leagues:', allLeagues);
+  const currentYear = new Date().getFullYear();
+  const recentLeagues = allLeagues.filter(l => {
+    const s = Number(l.seasons[0]);
+    return s === currentYear || s === currentYear - 1;
+  });
 
-  return allLeagues;
+  // Of those, only show the most recent season
+  const mostRecentSeason = recentLeagues.reduce((max, l) => {
+    const s = Number(l.seasons[0]);
+    return s > max ? s : max;
+  }, 0);
+  const filtered = recentLeagues.filter(l => Number(l.seasons[0]) === mostRecentSeason);
+
+  console.log('📊 Showing season:', mostRecentSeason, '→', filtered.length, 'league(s)');
+  return filtered;
 };
 
 // 5️⃣ Fetch manager insights
@@ -1064,7 +1075,8 @@ function teamsFromPicks(picks: DraftPick[]): Array<{ teamKey: string; managerNam
 // Returns SeasonDraftData. Also caches results to backend DB.
 const fetchLeagueDraftResults = async (
   leagueKey: string,
-  season: string
+  season: string,
+  chainOpts?: { rootKey: string; chain: Array<{ leagueKey: string; season: string }> }
 ): Promise<SeasonDraftData> => {
   const token = await getAccessToken();
 
@@ -1268,6 +1280,7 @@ const fetchLeagueDraftResults = async (
           nflTeam: picks[idx].nflTeam,
         })),
         trades,
+        ...(chainOpts ? { rootKey: chainOpts.rootKey, chain: chainOpts.chain } : {}),
       }),
     });
   } catch (_) {}
@@ -1368,7 +1381,9 @@ export const getMultiSeasonDraftResults = async (
 
     try {
       console.log(`  🌐 Fetching draft results for ${season} (${leagueKey})...`);
-      const seasonDraft = await fetchLeagueDraftResults(leagueKey, season);
+      // Pass chain along when fetching the root league so server stores it atomically with picks
+      const chainOpts = leagueKey === currentLeagueKey ? { rootKey: currentLeagueKey, chain: leagueChain } : undefined;
+      const seasonDraft = await fetchLeagueDraftResults(leagueKey, season, chainOpts);
       if (seasonDraft.picks.length > 0) {
         results.push(seasonDraft);
         console.log(`  ✅ ${seasonDraft.picks.length} picks for ${season}`);
@@ -1380,15 +1395,14 @@ export const getMultiSeasonDraftResults = async (
     await new Promise(resolve => setTimeout(resolve, 300));
   }
 
-  // Store the chain so future loads skip Yahoo API entirely
+  // Always store the chain after traversal — even if all picks came from cache.
+  // The atomic pick-save only fires on cache misses, so this covers the all-cached case.
   if (leagueChain.length > 0) {
-    try {
-      await fetch(`${BACKEND_URL}/cache/draft/chain`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ rootKey: currentLeagueKey, chain: leagueChain }),
-      });
-    } catch (_) {}
+    fetch(`${BACKEND_URL}/cache/draft/chain`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ rootKey: currentLeagueKey, chain: leagueChain }),
+    }).catch(err => console.warn('Failed to store draft chain:', err.message));
   }
 
   // Sort by season descending (most recent first)
@@ -1694,20 +1708,22 @@ const resolveAcqType = (type: string, sourceType: string | null): RosterPlayer['
 //         determine the true acquisition date and method, overriding the
 //         often-stale value Yahoo returns on the roster endpoint.
 // Step 4: persist enriched roster snapshot to DB.
-export const fetchCurrentRosters = async (leagueKey: string): Promise<TeamRoster[]> => {
+export const fetchCurrentRosters = async (leagueKey: string, season?: string): Promise<TeamRoster[]> => {
   const token = await getAccessToken();
   if (!token) throw new Error('No access token');
 
-  const currentSeason = new Date().getFullYear().toString();
-
   // Short-circuit: if we already have a cached roster in the DB, return it.
   // No need to re-fetch transactions or rosters from Yahoo every load.
-  const { rosters: cached } = await getCachedCurrentRosters(leagueKey);
+  const { rosters: cached } = await getCachedCurrentRosters(leagueKey, season);
   const cachedPlayerCount = cached.reduce((n, t) => n + t.players.length, 0);
   if (cachedPlayerCount > 0) {
     console.log(`💾 Using cached current rosters (${cachedPlayerCount} players) — skipping Yahoo fetch`);
     return cached;
   }
+
+  // season is the NFL season year (e.g. "2025"), resolved from the league object or DB
+  // Falls back to current calendar year only as last resort
+  const currentSeason = season || new Date().getFullYear().toString();
 
   // ── Step 1: transactions ─────────────────────────────────────────────────
   console.log('📋 Fetching transactions…');
@@ -1829,7 +1845,7 @@ export const fetchCurrentRosters = async (leagueKey: string): Promise<TeamRoster
     fetch(`${BACKEND_URL}/cache/current-rosters`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ leagueKey, season: currentSeason, entries: dbEntries }),
+      body: JSON.stringify({ leagueKey, season: currentSeason, teams: teamInfos, entries: dbEntries }),
     }).catch(err => console.warn('Failed to persist current rosters:', err));
   }
 
@@ -1855,13 +1871,44 @@ export const getCurrentUserGuid = async (): Promise<string | null> => {
 };
 
 // Load cached current rosters from DB (no Yahoo call needed)
-export const getCachedCurrentRosters = async (leagueKey: string): Promise<{
+export const getCachedCurrentRosters = async (leagueKey: string, season?: string): Promise<{
   rosters: TeamRoster[];
   cacheAge: string | null;
 }> => {
-  const season = new Date().getFullYear().toString();
-  const res = await fetch(`${BACKEND_URL}/cache/current-rosters/${leagueKey}?season=${season}`);
+  // If caller doesn't know the season, omit it and let the server resolve it from the DB
+  const url = season
+    ? `${BACKEND_URL}/cache/current-rosters/${leagueKey}?season=${season}`
+    : `${BACKEND_URL}/cache/current-rosters/${leagueKey}`;
+  const res = await fetch(url);
   if (!res.ok) return { rosters: [], cacheAge: null };
   const data = await res.json();
   return { rosters: data.rosters || [], cacheAge: data.cacheAge || null };
+};
+
+// Clear the DB roster cache for a league then re-fetch from Yahoo (forces ineligibility recompute)
+export const refreshCurrentRosters = async (leagueKey: string, season?: string): Promise<TeamRoster[]> => {
+  const url = season
+    ? `${BACKEND_URL}/cache/current-rosters/${leagueKey}?season=${season}`
+    : `${BACKEND_URL}/cache/current-rosters/${leagueKey}`;
+  await fetch(url, { method: 'DELETE' });
+  return fetchCurrentRosters(leagueKey, season);
+};
+
+export const fetchDynastyRankings = async (): Promise<Map<string, { overallRank: number; positionRank: number; value: number }>> => {
+  try {
+    const res = await fetch(`${BACKEND_URL}/fantasycalc/rankings`);
+    if (!res.ok) return new Map();
+    const data = await res.json();
+    const map = new Map<string, { overallRank: number; positionRank: number; value: number }>();
+    for (const p of data.players ?? []) {
+      map.set((p.player_name as string).toLowerCase(), {
+        overallRank: p.overall_rank,
+        positionRank: p.position_rank,
+        value: p.value,
+      });
+    }
+    return map;
+  } catch {
+    return new Map();
+  }
 };

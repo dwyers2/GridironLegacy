@@ -2,8 +2,11 @@ import Database from 'better-sqlite3';
 import fs from 'fs';
 import path from 'path';
 
-const DB_PATH = path.join(__dirname, 'gridiron_legacy.db');
+const DB_PATH = process.env.DATABASE_PATH || path.join(__dirname, 'gridiron_legacy.db');
 const SCHEMA_PATH = path.join(__dirname, 'schema.sql');
+
+// Ensure the database directory exists before opening
+fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
 
 // Initialize database
 export const db = new Database(DB_PATH);
@@ -49,6 +52,19 @@ export function initializeDatabase() {
     CREATE INDEX IF NOT EXISTS idx_transactions_league ON transactions(league_key);
     CREATE INDEX IF NOT EXISTS idx_transactions_player ON transactions(player_key, team_key);
     CREATE INDEX IF NOT EXISTS idx_transactions_season ON transactions(league_key, season);
+  `);
+
+  // FantasyCalc dynasty rankings cache
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS fantasycalc_players (
+      fc_id INTEGER PRIMARY KEY,
+      player_name TEXT NOT NULL,
+      position TEXT,
+      overall_rank INTEGER,
+      position_rank INTEGER,
+      value INTEGER,
+      last_updated DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
   `);
 
   console.log('✅ Database initialized');
@@ -259,11 +275,16 @@ export function getAllManagers() {
   `).all() as Array<{ manager_id: string; manager_name: string }>;
 }
 
-// Get cache timestamp for a league
+// Get cache timestamp and season for a league
 export function getLeagueCacheAge(leagueKey: string): Date | null {
   const stmt = db.prepare(`SELECT last_updated FROM leagues WHERE league_key = ?`);
   const result = stmt.get(leagueKey) as { last_updated: string } | undefined;
   return result ? new Date(result.last_updated) : null;
+}
+
+export function getLeagueSeason(leagueKey: string): string | null {
+  const result = db.prepare(`SELECT season FROM leagues WHERE league_key = ?`).get(leagueKey) as { season: string } | undefined;
+  return result?.season ?? null;
 }
 
 // Get all cached seasons
@@ -476,6 +497,42 @@ export function getLeagueChain(rootKey: string): Array<{ leagueKey: string; seas
   try { return JSON.parse(row.value); } catch { return null; }
 }
 
+// Find the chain that contains a given leagueKey (searches all stored chains)
+export function getChainContaining(leagueKey: string): Array<{ leagueKey: string; season: string }> | null {
+  const rows = db.prepare(`SELECT value FROM cache_metadata WHERE key LIKE 'draft_chain:%'`).all() as Array<{ value: string }>;
+  for (const row of rows) {
+    try {
+      const chain: Array<{ leagueKey: string; season: string }> = JSON.parse(row.value);
+      if (chain.some(c => c.leagueKey === leagueKey)) return chain;
+    } catch { /* skip */ }
+  }
+  return null;
+}
+
+// Times a player has been kept consecutively counting back from priorSeason
+// Returns Map<player_id, timesKept>
+export function getTimesKeptPerPlayer(chainLeagueKeys: string[], priorSeason: string): Map<string, number> {
+  if (chainLeagueKeys.length === 0) return new Map();
+  const allKeepers = getKeeperSummaryForChain(chainLeagueKeys);
+
+  const extractId = (key: string): string => { const m = key.match(/\.p\.(\d+)$/); return m ? m[1] : key; };
+  const playerSeasons: Record<string, Set<number>> = {};
+  for (const k of allKeepers) {
+    const pid = extractId(k.player_key);
+    if (!playerSeasons[pid]) playerSeasons[pid] = new Set();
+    playerSeasons[pid].add(Number(k.season));
+  }
+
+  const result = new Map<string, number>();
+  const prior = Number(priorSeason);
+  for (const [pid, seasons] of Object.entries(playerSeasons)) {
+    let count = 0; let year = prior;
+    while (seasons.has(year)) { count++; year--; }
+    if (count > 0) result.set(pid, count);
+  }
+  return result;
+}
+
 // Get all teams for a specific league
 export function getTeamsForLeague(leagueKey: string): Array<{
   team_key: string;
@@ -620,6 +677,15 @@ export function toggleKeeper(leagueKey: string, pick: number): boolean {
   }
 }
 
+// Bulk insert keeper designations (idempotent — skips existing)
+export function bulkSetKeepers(keepers: Array<{ leagueKey: string; pick: number }>) {
+  const stmt = db.prepare(`INSERT OR IGNORE INTO keeper_designations (league_key, pick) VALUES (?, ?)`);
+  const transaction = db.transaction(() => {
+    for (const k of keepers) stmt.run(k.leagueKey, k.pick);
+  });
+  transaction();
+}
+
 // Transaction helper for bulk inserts
 export function runInTransaction<T>(fn: () => T): T {
   const transaction = db.transaction(fn);
@@ -691,6 +757,49 @@ export function getLatestTransactionTimestamp(leagueKey: string, season: string)
     SELECT MAX(timestamp) as ts FROM transactions WHERE league_key = ? AND season = ?
   `).get(leagueKey, season) as { ts: number | null };
   return r.ts || 0;
+}
+
+// ─── FantasyCalc Dynasty Rankings Cache ───────────────────────────────────────
+
+export function getFantasyCalcCacheAge(): Date | null {
+  const r = db.prepare(`SELECT MAX(last_updated) as max_ts FROM fantasycalc_players`).get() as { max_ts: string | null };
+  return r?.max_ts ? new Date(r.max_ts) : null;
+}
+
+export function saveFantasyCalcRankings(players: Array<{
+  fcId: number;
+  playerName: string;
+  position: string;
+  overallRank: number;
+  positionRank: number;
+  value: number;
+}>): void {
+  const tx = db.transaction(() => {
+    db.prepare(`DELETE FROM fantasycalc_players`).run();
+    const stmt = db.prepare(`
+      INSERT INTO fantasycalc_players (fc_id, player_name, position, overall_rank, position_rank, value)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `);
+    for (const p of players) {
+      stmt.run(p.fcId, p.playerName, p.position, p.overallRank, p.positionRank, p.value);
+    }
+  });
+  tx();
+}
+
+export function getAllFantasyCalcRankings(): Array<{
+  fc_id: number;
+  player_name: string;
+  position: string;
+  overall_rank: number;
+  position_rank: number;
+  value: number;
+}> {
+  return db.prepare(`
+    SELECT fc_id, player_name, position, overall_rank, position_rank, value
+    FROM fantasycalc_players
+    ORDER BY overall_rank
+  `).all() as any[];
 }
 
 // Get all cached transactions for a league/season (newest first)

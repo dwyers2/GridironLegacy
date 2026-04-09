@@ -3,8 +3,13 @@ import cors from 'cors';
 import axios from 'axios';
 import crypto from 'crypto';
 import dotenv from 'dotenv';
+import path from 'path';
+import { fileURLToPath } from 'url';
 import * as db from './db';
 import * as cacheService from './cacheService';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 // Load environment variables
 dotenv.config();
@@ -13,7 +18,7 @@ dotenv.config();
 db.initializeDatabase();
 
 const app = express();
-const PORT = process.env.PORT || 3001;
+const PORT = Number(process.env.PORT) || 3001;
 
 const CLIENT_ID = process.env.YAHOO_CLIENT_ID || 'dj0yJmk9dnRMc3llQWFTQkljJmQ9WVdrOVF6Y3diRVpEUjNjbWNHbzlNQT09JnM9Y29uc3VtZXJzZWNyZXQmc3Y9MCZ4PTA2';
 const CLIENT_SECRET = process.env.YAHOO_CLIENT_SECRET || '1105953219bf6b129a438e91cf792557eed39458';
@@ -579,6 +584,7 @@ app.get('/api/cache/aggregated', (req, res) => {
   try {
     const data = cacheService.getCachedAggregatedData();
     const cachedSeasons = db.getCachedSeasons();
+    console.log(`📋 GET aggregated: managers=${data.length} cachedSeasons=[${cachedSeasons.join(',')}]`);
     res.json({
       managers: data,
       count: data.length,
@@ -626,6 +632,7 @@ app.get('/api/cache/tendencies', (req, res) => {
   try {
     const tendencies = db.getCachedTendencies();
     const needsUpdate = db.tendenciesNeedUpdate([]);
+    console.log(`📋 GET tendencies: count=${tendencies.length} needsUpdate=${needsUpdate}`);
     res.json({
       tendencies,
       count: tendencies.length,
@@ -665,9 +672,21 @@ app.post('/api/cache/tendencies', (req, res) => {
 // Save current roster snapshot (with acquisition data) for a league
 app.post('/api/cache/current-rosters', (req, res) => {
   try {
-    const { leagueKey, season, entries } = req.body;
+    const { leagueKey, season, teams, entries } = req.body;
     if (!leagueKey || !season || !Array.isArray(entries)) {
       return res.status(400).json({ error: 'leagueKey, season, and entries[] required' });
+    }
+
+    // Ensure the league row exists (FK for teams)
+    db.cacheLeague(leagueKey, `League ${season}`, season, leagueKey.split('.')[0] || '');
+
+    // Ensure all referenced teams exist in the teams table
+    if (Array.isArray(teams)) {
+      for (const t of teams) {
+        if (t.teamKey) {
+          db.cacheTeam(t.teamKey, leagueKey, t.teamName || '', t.managerId || '', t.managerName || '', season);
+        }
+      }
     }
 
     // Ensure all referenced players exist in the players table
@@ -683,14 +702,22 @@ app.post('/api/cache/current-rosters', (req, res) => {
     const roundByPlayerId = db.getDraftRoundsForLeague(leagueKey);
     const everKeptIds = db.getEverKeptPlayerIds();
 
+    // Kept 2+ consecutive years → no longer eligible
+    const chain = db.getChainContaining(leagueKey);
+    const chainKeys = chain ? chain.map((c: any) => c.leagueKey) : [];
+    const priorSeason = String(Number(season) - 1);
+    const timesKeptById = db.getTimesKeptPerPlayer(chainKeys, priorSeason);
+
     const enriched = entries.map((e: any) => {
       const draftRound = roundByPlayerId.get(e.playerId);
       const wasEverKept = everKeptIds.has(e.playerId);
+      const timesKept = timesKeptById.get(e.playerId) || 0;
       const isPostDeadline = !!deadlineMs && !!e.acquisitionDate
         && (e.acquisitionType === 'freeagent' || e.acquisitionType === 'waivers')
         && new Date(e.acquisitionDate).getTime() > deadlineMs;
       const isTopRound = !wasEverKept && draftRound !== undefined && draftRound <= 4;
-      return { ...e, isKeeperIneligible: isPostDeadline || isTopRound };
+      const isMaxKept = timesKept >= 2;
+      return { ...e, isKeeperIneligible: isPostDeadline || isTopRound || isMaxKept };
     });
 
     db.saveCurrentRosters(leagueKey, season, enriched);
@@ -699,6 +726,42 @@ app.post('/api/cache/current-rosters', (req, res) => {
   } catch (err: any) {
     console.error('Failed to save current rosters:', err);
     res.status(500).json({ error: 'Failed to save current rosters', message: err.message });
+  }
+});
+
+// FantasyCalc dynasty rankings — cached in DB for 24 hours
+app.get('/api/fantasycalc/rankings', async (req, res) => {
+  try {
+    const FANTASYCALC_URL = 'https://api.fantasycalc.com/values/current?isDynasty=true&numQbs=1&numTeams=12&ppr=1';
+    const cacheAge = db.getFantasyCalcCacheAge();
+    const isFresh = cacheAge !== null && (Date.now() - cacheAge.getTime()) < 24 * 60 * 60 * 1000;
+
+    if (isFresh) {
+      return res.json({ players: db.getAllFantasyCalcRankings(), cached: true });
+    }
+
+    const response = await fetch(FANTASYCALC_URL);
+    if (!response.ok) throw new Error(`FantasyCalc API error: ${response.status}`);
+    const data = await response.json() as Array<{
+      player: { id: number; name: string; position: string };
+      overallRank: number;
+      positionRank: number;
+      value: number;
+    }>;
+
+    db.saveFantasyCalcRankings(data.map(p => ({
+      fcId: p.player.id,
+      playerName: p.player.name,
+      position: p.player.position,
+      overallRank: p.overallRank,
+      positionRank: p.positionRank,
+      value: p.value,
+    })));
+
+    return res.json({ players: db.getAllFantasyCalcRankings(), cached: false });
+  } catch (err: any) {
+    console.error('FantasyCalc rankings error:', err);
+    res.status(500).json({ error: 'Failed to fetch FantasyCalc rankings', message: err.message });
   }
 });
 
@@ -718,8 +781,11 @@ app.post('/api/cache/trade-deadline', (req, res) => {
 app.get('/api/cache/current-rosters/:leagueKey', (req, res) => {
   try {
     const { leagueKey } = req.params;
-    const season = (req.query.season as string) || new Date().getFullYear().toString();
+    // Prefer explicit season param; fall back to what's stored for this league in the DB
+    const season = (req.query.season as string) || db.getLeagueSeason(leagueKey) || new Date().getFullYear().toString();
+    console.log(`📋 GET current-rosters: leagueKey=${leagueKey} season=${season}`);
     const rows = db.getCachedCurrentRosters(leagueKey, season);
+    console.log(`   → ${rows.length} rows found`);
     const cacheAge = db.getCurrentRosterCacheAge(leagueKey, season);
 
     const teamsMap = new Map<string, any>();
@@ -753,6 +819,19 @@ app.get('/api/cache/current-rosters/:leagueKey', (req, res) => {
   } catch (err: any) {
     console.error('Failed to get current rosters:', err);
     res.status(500).json({ error: 'Failed to get current rosters', message: err.message });
+  }
+});
+
+// Clear current roster cache for a league so a fresh fetch+recompute happens
+app.delete('/api/cache/current-rosters/:leagueKey', (req, res) => {
+  try {
+    const { leagueKey } = req.params;
+    const season = (req.query.season as string) || db.getLeagueSeason(leagueKey) || new Date().getFullYear().toString();
+    db.db.prepare('DELETE FROM roster_entries WHERE league_key = ? AND season = ?').run(leagueKey, season);
+    console.log(`🗑️ Cleared roster cache for ${leagueKey} season ${season}`);
+    res.json({ success: true });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
   }
 });
 
@@ -815,10 +894,25 @@ app.post('/api/players/resolve', (req, res) => {
   }
 });
 
+// Bulk cache teams (used for migration/seeding)
+app.post('/api/cache/teams', (req, res) => {
+  try {
+    const { teams } = req.body;
+    if (!Array.isArray(teams)) return res.status(400).json({ error: 'teams array required' });
+    for (const t of teams) {
+      db.cacheLeague(t.leagueKey, `League ${t.season}`, t.season, t.leagueKey.split('.')[0] || '');
+      db.cacheTeam(t.teamKey, t.leagueKey, t.teamName || '', t.managerId || '', t.managerName || '', t.season);
+    }
+    res.json({ success: true, count: teams.length });
+  } catch (err: any) {
+    res.status(500).json({ error: 'Failed to cache teams', message: err.message });
+  }
+});
+
 // Cache draft results for a league season
 app.post('/api/cache/draft', (req, res) => {
   try {
-    const { leagueKey, season, picks, trades } = req.body;
+    const { leagueKey, season, picks, trades, rootKey, chain } = req.body;
     if (!leagueKey || !season || !Array.isArray(picks)) {
       return res.status(400).json({ error: 'leagueKey, season, and picks array required' });
     }
@@ -827,6 +921,11 @@ app.post('/api/cache/draft', (req, res) => {
     if (Array.isArray(trades) && trades.length > 0) {
       db.cacheDraftPickTrades(leagueKey, trades);
       console.log(`🔄 Cached ${trades.length} traded picks for ${season}`);
+    }
+    // Atomically store the league chain when provided (sent with the root/current season's picks)
+    if (rootKey && Array.isArray(chain) && chain.length > 0) {
+      db.storeLeagueChain(rootKey, chain);
+      console.log(`💾 Stored draft chain for ${rootKey}: ${chain.length} seasons`);
     }
     console.log(`✅ Cached ${picks.length} draft picks for ${season}`);
     res.json({ success: true, count: picks.length });
@@ -847,6 +946,7 @@ app.post('/api/cache/draft/chain', (req, res) => {
     console.log(`💾 Stored draft chain for ${rootKey}: ${chain.length} seasons`);
     res.json({ success: true });
   } catch (err: any) {
+    console.error(`❌ Failed to store chain for ${req.body?.rootKey}:`, err.message);
     res.status(500).json({ error: 'Failed to store chain', message: err.message });
   }
 });
@@ -856,15 +956,19 @@ app.get('/api/cache/draft/chain/:leagueKey', (req, res) => {
   try {
     const { leagueKey } = req.params;
     const chain = db.getLeagueChain(leagueKey);
+    console.log(`📋 GET draft/chain: leagueKey=${leagueKey} chainFound=${!!chain} chainLen=${chain?.length ?? 0}`);
     if (!chain) return res.json({ found: false });
 
     const seasons = chain.map(({ leagueKey: lk, season }) => {
       const picks = db.hasDraftData(lk) ? db.getDraftResultsForLeague(lk) : [];
       const hasNames = picks.some(p => p.player_name && p.player_name.length > 0);
+      console.log(`  season=${season} lk=${lk} picks=${picks.length} hasNames=${hasNames}`);
       return { leagueKey: lk, season, picks, hasNames };
     });
 
-    const allCached = seasons.every(s => s.picks.length > 0 && s.hasNames);
+    // A season with 0 picks is OK (draft hasn't happened yet) — but at least one season must have picks
+    const allCached = seasons.some(s => s.picks.length > 0) && seasons.every(s => s.picks.length === 0 || s.hasNames);
+    console.log(`  allCached=${allCached}`);
     res.json({ found: true, allCached, seasons });
   } catch (err: any) {
     res.status(500).json({ error: 'Failed to get chain', message: err.message });
@@ -1058,6 +1162,18 @@ app.post('/api/keepers/toggle', (req, res) => {
   }
 });
 
+// Bulk set keeper designations (idempotent, used for migration)
+app.post('/api/keepers/bulk', (req, res) => {
+  try {
+    const { keepers } = req.body; // [{leagueKey, pick}]
+    if (!Array.isArray(keepers)) return res.status(400).json({ error: 'keepers array required' });
+    db.bulkSetKeepers(keepers);
+    res.json({ success: true, count: keepers.length });
+  } catch (err: any) {
+    res.status(500).json({ error: 'Failed to bulk set keepers', message: err.message });
+  }
+});
+
 // Clear only AI tendencies cache (keeps roster data)
 app.post('/api/cache/tendencies/clear', (req, res) => {
   try {
@@ -1070,7 +1186,14 @@ app.post('/api/cache/tendencies/clear', (req, res) => {
   }
 });
 
-app.listen(PORT, () => {
+// Serve built frontend in production
+const distPath = path.join(__dirname, '../dist');
+app.use(express.static(distPath));
+app.get('*', (_req, res) => {
+  res.sendFile(path.join(distPath, 'index.html'));
+});
+
+app.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 Yahoo Fantasy Backend running on port ${PORT}`);
   console.log(`📍 Redirect URI: ${REDIRECT_URI}`);
   console.log(`💾 Database initialized and ready`);

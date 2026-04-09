@@ -21,6 +21,7 @@ const App: React.FC = () => {
   const [managerData, setManagerData] = useState<ManagerHistory[]>([]);
   const [managerOwnership, setManagerOwnership] = useState<ManagerOwnershipData[]>([]);
   const [managerTendencies, setManagerTendencies] = useState<ManagerTendency[]>([]);
+  const [tendenciesLoading, setTendenciesLoading] = useState(false);
   const [aiInsights, setAiInsights] = useState<any>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -35,11 +36,13 @@ const App: React.FC = () => {
   const [rosterLoading, setRosterLoading] = useState(false);
   const [tradeDeadline, setTradeDeadline] = useState<string | null>(null);
   const [rosterCacheAge, setRosterCacheAge] = useState<string | null>(null);
+  const [dynastyRankings, setDynastyRankings] = useState<Map<string, { overallRank: number; positionRank: number; value: number }>>(new Map());
   const [currentUserGuid, setCurrentUserGuid] = useState<string | null>(null);
 
   // ✅ Prevent double-processing with ref
   const isProcessingOAuth = useRef(false);
   const hasProcessedCode = useRef(false);
+  const pendingTabRestore = useRef<string | null>(null);
 
   useEffect(() => {
     const handleOAuthCallback = async () => {
@@ -140,7 +143,33 @@ const App: React.FC = () => {
     }
   };
 
+  // Persist selected league + tab so a browser refresh restores the same page
+  useEffect(() => {
+    if (currentStep === AppState.DASHBOARD) {
+      localStorage.setItem('last_dashboard_tab', dashboardTab);
+    }
+  }, [dashboardTab, currentStep]);
+
+  useEffect(() => {
+    if (currentStep === AppState.DASHBOARD && pendingTabRestore.current) {
+      setDashboardTab(pendingTabRestore.current as typeof dashboardTab);
+      pendingTabRestore.current = null;
+    }
+  }, [currentStep]);
+
+  useEffect(() => {
+    if (leagues.length === 0 || currentStep !== AppState.LEAGUE_SELECT) return;
+    const savedId = localStorage.getItem('last_league_id');
+    if (!savedId) return;
+    const saved = leagues.find((l: League) => l.id === savedId);
+    if (saved) {
+      pendingTabRestore.current = localStorage.getItem('last_dashboard_tab');
+      handleSelectLeague(saved);
+    }
+  }, [leagues]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const handleSelectLeague = async (league: League) => {
+    localStorage.setItem('last_league_id', league.id);
     setLoading(true);
     setSelectedLeague(league);
     setError(null);
@@ -197,14 +226,15 @@ const App: React.FC = () => {
       setCurrentRosters([]);
       setTradeDeadline(null);
       // Load cached snapshot instantly, then fetch live data from Yahoo
-      yahooService.getCachedCurrentRosters(league.id).then(({ rosters, cacheAge }) => {
+      const leagueSeason = league.seasons[0];
+      yahooService.getCachedCurrentRosters(league.id, leagueSeason).then(({ rosters, cacheAge }) => {
         if (rosters.length > 0) {
           setCurrentRosters(rosters);
           setRosterCacheAge(cacheAge);
         }
       }).catch(() => {});
       Promise.all([
-        yahooService.fetchCurrentRosters(league.id),
+        yahooService.fetchCurrentRosters(league.id, leagueSeason),
         yahooService.fetchTradeDeadline(league.id),
       ]).then(([rosters, deadline]) => {
         // Only update if the live fetch returned actual players; never blank out the cache
@@ -219,6 +249,9 @@ const App: React.FC = () => {
       }).finally(() => {
         setRosterLoading(false);
       });
+
+      // Kick off dynasty rankings fetch in the background
+      yahooService.fetchDynastyRankings().then(r => setDynastyRankings(r)).catch(() => {});
     } catch (err: any) {
       console.error('Failed to load league details:', err);
       setError(`Failed to load league details: ${err.message}`);
@@ -227,49 +260,36 @@ const App: React.FC = () => {
     }
   };
 
-  const handleViewManagerInsights = async (targetTab: 'ownership' | 'tendencies' = 'ownership') => {
+  const loadOwnershipData = async () => {
     if (!selectedLeague) return;
-
     setLoading(true);
     setError(null);
     setFetchProgress(null);
-    setDashboardTab(targetTab);
-
+    setDashboardTab('ownership');
     try {
-      console.log('Loading multi-season manager ownership data...');
-
-      // Use new multi-season fetching function
-      const { allSeasonData, aggregatedOwnership, errors } = await yahooService.getMultiSeasonRosters(
+      const { aggregatedOwnership, errors } = await yahooService.getMultiSeasonRosters(
         selectedLeague.id,
-        {
-          onProgress: (progress) => {
-            setFetchProgress(progress);
-          }
-        }
+        { onProgress: (progress) => setFetchProgress(progress) }
       );
-
-      // Log any non-critical errors
-      if (errors.length > 0) {
-        console.warn('Some seasons had errors:', errors);
-      }
-
-      console.log('📊 Aggregated ownership data:', aggregatedOwnership);
-      console.log('📊 Number of managers:', aggregatedOwnership.length);
-      aggregatedOwnership.forEach(manager => {
-        console.log(`  Manager: ${manager.managerName}, Players: ${manager.players.length}, Seasons: ${manager.seasonsTracked?.join(', ')}`);
-      });
-
+      if (errors.length > 0) console.warn('Some seasons had errors:', errors);
       setManagerOwnership(aggregatedOwnership);
+    } catch (err: any) {
+      console.error('Failed to load ownership data:', err);
+      setError(`Failed to load ownership data: ${err.message}`);
+    } finally {
+      setLoading(false);
       setFetchProgress(null);
+    }
+  };
 
-      // Check for cached AI tendencies and identify which managers need analysis
-      console.log('💾 Checking for cached AI tendencies...');
-      console.log(`📊 allSeasonData.length = ${allSeasonData.length} (if >0, new data was fetched)`);
+  const loadTendencies = async (ownership: ManagerOwnershipData[]) => {
+    if (ownership.length === 0) return;
+    setTendenciesLoading(true);
+    try {
+      // Always check cache first — never bypass it based on whether roster data was re-fetched
       let cachedTendencies: ManagerTendency[] = [];
-      const newDataFetched = allSeasonData.length > 0;
-
       try {
-        const cacheRes = await fetch('http://localhost:3001/api/cache/tendencies');
+        const cacheRes = await fetch('/api/cache/tendencies');
         if (cacheRes.ok) {
           const cacheData = await cacheRes.json();
           cachedTendencies = cacheData.tendencies || [];
@@ -279,126 +299,70 @@ const App: React.FC = () => {
         console.warn('⚠️ Could not check tendencies cache:', err);
       }
 
-      // Find managers missing AI analysis (either no cache entry or basic fallback text)
-      const managersNeedingAnalysis = newDataFetched
-        ? aggregatedOwnership // If new data fetched, regenerate all
-        : aggregatedOwnership.filter(m => {
-            const cached = cachedTendencies.find(t => t.managerId === m.managerId);
-            if (!cached) return true; // Not cached at all
-
-            // Detect fallback patterns (both frontend and backend generated)
-            const analysis = cached.analysis || '';
-            const isFrontendFallback = analysis.includes('Prefers') && analysis.includes('positions. Loyalty:');
-            const isBackendFallback = analysis.includes('Favors') && analysis.includes('Loyalty score:');
-            const isFallbackText = isFrontendFallback || isBackendFallback;
-
-            if (isFallbackText) {
-              console.log(`  📝 ${m.managerName} has fallback text, needs AI regeneration`);
-            }
-            return isFallbackText;
-          });
-
-      console.log(`🔄 newDataFetched=${newDataFetched}, managersNeedingAnalysis=${managersNeedingAnalysis.length}`);
+      const managersNeedingAnalysis = ownership.filter(m => {
+        const cached = cachedTendencies.find(t => t.managerId === m.managerId);
+        if (!cached) return true;
+        const analysis = cached.analysis || '';
+        const isFallback = (analysis.includes('Prefers') && analysis.includes('positions. Loyalty:'))
+          || (analysis.includes('Favors') && analysis.includes('Loyalty score:'));
+        return isFallback;
+      });
 
       console.log(`🔍 ${managersNeedingAnalysis.length} managers need AI analysis`);
 
-      let finalTendencies: ManagerTendency[] = [];
-
       if (managersNeedingAnalysis.length === 0) {
-        // All managers have valid cached tendencies
         console.log('✅ Using fully cached AI tendencies');
-        finalTendencies = cachedTendencies;
-      } else {
-        // Need to generate tendencies for some/all managers
-        console.log(`🤖 Requesting AI analysis for ${managersNeedingAnalysis.length} managers...`);
+        setManagerTendencies(cachedTendencies);
+        return;
+      }
+
+      let finalTendencies: ManagerTendency[] = [];
+      try {
+        const newTendencies = await geminiService.getManagerTendencies(managersNeedingAnalysis);
+        const newTendencyMap = new Map(newTendencies.map(t => [t.managerId, t]));
+        finalTendencies = ownership.map(manager => {
+          if (newTendencyMap.has(manager.managerId)) return newTendencyMap.get(manager.managerId)!;
+          const cached = cachedTendencies.find(t => t.managerId === manager.managerId);
+          if (cached) return cached;
+          const players = manager.players || [];
+          const positionCounts: { [key: string]: number } = {};
+          players.forEach(p => {
+            if (p.position) positionCounts[p.position] = (positionCounts[p.position] || 0) + (p.timesOwned || 0);
+          });
+          const topPositions = Object.entries(positionCounts).sort(([,a],[,b]) => b-a).slice(0,3).map(([pos]) => pos);
+          const loyaltyScore = Math.round((players.filter(p => (p.timesOwned||0) > 1).length / Math.max(players.length,1)) * 100);
+          return { managerId: manager.managerId, managerName: manager.managerName, analysis: `Prefers ${topPositions.join(', ')} positions. Loyalty: ${loyaltyScore}%`, topPositions, loyaltyScore };
+        });
 
         try {
-          const newTendencies = await geminiService.getManagerTendencies(managersNeedingAnalysis);
-          console.log(`✅ Received ${newTendencies.length} AI tendencies`);
-
-          // Merge: use new tendencies for analyzed managers, keep cached for others
-          const newTendencyMap = new Map(newTendencies.map(t => [t.managerId, t]));
-          finalTendencies = aggregatedOwnership.map(manager => {
-            // Prefer newly generated, then cached, then generate basic fallback
-            if (newTendencyMap.has(manager.managerId)) {
-              return newTendencyMap.get(manager.managerId)!;
-            }
-            const cached = cachedTendencies.find(t => t.managerId === manager.managerId);
-            if (cached) {
-              return cached;
-            }
-            // Fallback for any remaining
-            const positionCounts: { [key: string]: number } = {};
-            const players = manager.players || [];
-            players.forEach(p => {
-              if (p.position) {
-                positionCounts[p.position] = (positionCounts[p.position] || 0) + (p.timesOwned || 0);
-              }
-            });
-            const topPositions = Object.entries(positionCounts)
-              .sort(([, a], [, b]) => b - a)
-              .slice(0, 3)
-              .map(([pos]) => pos);
-            const loyaltyScore = Math.round((players.filter(p => (p.timesOwned || 0) > 1).length / Math.max(players.length, 1)) * 100);
-            return {
-              managerId: manager.managerId,
-              managerName: manager.managerName,
-              analysis: `Prefers ${topPositions.join(', ')} positions. Loyalty: ${loyaltyScore}%`,
-              topPositions,
-              loyaltyScore
-            };
+          await fetch('/api/cache/tendencies', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ tendencies: finalTendencies })
           });
-
-          // Cache all tendencies (including newly generated ones)
-          try {
-            await fetch('http://localhost:3001/api/cache/tendencies', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ tendencies: finalTendencies })
-            });
-            console.log('💾 AI tendencies cached');
-          } catch (cacheErr) {
-            console.warn('⚠️ Failed to cache tendencies:', cacheErr);
-          }
-        } catch (geminiErr) {
-          console.warn('⚠️ Gemini error, using cached + basic fallbacks:', geminiErr);
-          // Use whatever we have cached, generate basic for the rest
-          finalTendencies = aggregatedOwnership.map(manager => {
-            const cached = cachedTendencies.find(t => t.managerId === manager.managerId);
-            if (cached) return cached;
-
-            const positionCounts: { [key: string]: number } = {};
-            const players = manager.players || [];
-            players.forEach(p => {
-              if (p.position) {
-                positionCounts[p.position] = (positionCounts[p.position] || 0) + (p.timesOwned || 0);
-              }
-            });
-            const topPositions = Object.entries(positionCounts)
-              .sort(([, a], [, b]) => b - a)
-              .slice(0, 3)
-              .map(([pos]) => pos);
-            const loyaltyScore = Math.round((players.filter(p => (p.timesOwned || 0) > 1).length / Math.max(players.length, 1)) * 100);
-            return {
-              managerId: manager.managerId,
-              managerName: manager.managerName,
-              analysis: `Prefers ${topPositions.join(', ')} positions. Loyalty: ${loyaltyScore}%`,
-              topPositions,
-              loyaltyScore
-            };
-          });
+          console.log('💾 AI tendencies cached');
+        } catch (cacheErr) {
+          console.warn('⚠️ Failed to cache tendencies:', cacheErr);
         }
+      } catch (geminiErr) {
+        console.warn('⚠️ Gemini error, using cached + fallbacks:', geminiErr);
+        finalTendencies = ownership.map(manager => {
+          const cached = cachedTendencies.find(t => t.managerId === manager.managerId);
+          if (cached) return cached;
+          const players = manager.players || [];
+          const positionCounts: { [key: string]: number } = {};
+          players.forEach(p => {
+            if (p.position) positionCounts[p.position] = (positionCounts[p.position] || 0) + (p.timesOwned || 0);
+          });
+          const topPositions = Object.entries(positionCounts).sort(([,a],[,b]) => b-a).slice(0,3).map(([pos]) => pos);
+          const loyaltyScore = Math.round((players.filter(p => (p.timesOwned||0) > 1).length / Math.max(players.length,1)) * 100);
+          return { managerId: manager.managerId, managerName: manager.managerName, analysis: `Prefers ${topPositions.join(', ')} positions. Loyalty: ${loyaltyScore}%`, topPositions, loyaltyScore };
+        });
       }
 
       setManagerTendencies(finalTendencies);
-
-      console.log('✅ Multi-season manager insights loaded');
-    } catch (err: any) {
-      console.error('Failed to load manager insights:', err);
-      setError(`Failed to load manager insights: ${err.message}`);
     } finally {
-      setLoading(false);
-      setFetchProgress(null);
+      setTendenciesLoading(false);
     }
   };
 
@@ -426,7 +390,7 @@ const App: React.FC = () => {
       if (refreshed) {
         const updated = managerTendencies.map(t => t.managerId === managerId ? refreshed : t);
         setManagerTendencies(updated);
-        await fetch('http://localhost:3001/api/cache/tendencies', {
+        await fetch('/api/cache/tendencies', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ tendencies: updated })
@@ -447,6 +411,8 @@ const App: React.FC = () => {
     localStorage.removeItem('yahoo_access_token');
     localStorage.removeItem('yahoo_refresh_token');
     localStorage.removeItem('yahoo_access_token_expires');
+    localStorage.removeItem('last_league_id');
+    localStorage.removeItem('last_dashboard_tab');
     hasProcessedCode.current = false; // Reset for next login
     setCurrentStep(AppState.LOGIN);
     setSelectedLeague(null);
@@ -801,8 +767,31 @@ const App: React.FC = () => {
                       ? <span style={{ fontSize: '0.6rem', background: 'var(--gold-dim)', color: 'var(--gold)', padding: '0.1rem 0.4rem', borderRadius: '99px', fontWeight: 700, border: '1px solid rgba(212,160,23,0.25)' }}>{draftData.length}</span>
                       : null,
                 },
-                { id: 'ownership', icon: <Users size={15} />, label: 'Player Ownership', onClick: () => managerOwnership.length > 0 ? setDashboardTab('ownership') : handleViewManagerInsights('ownership') },
-                { id: 'tendencies', icon: <Sparkles size={15} />, label: 'AI Tendencies', onClick: () => managerOwnership.length > 0 ? setDashboardTab('tendencies') : handleViewManagerInsights('tendencies') },
+                { id: 'ownership', icon: <Users size={15} />, label: 'Player Ownership', onClick: () => managerOwnership.length > 0 ? setDashboardTab('ownership') : loadOwnershipData() },
+                { id: 'tendencies', icon: <Sparkles size={15} />, label: 'AI Tendencies', onClick: async () => {
+                  setDashboardTab('tendencies');
+                  if (managerOwnership.length === 0) {
+                    // Need ownership data first, then load tendencies
+                    setLoading(true);
+                    setError(null);
+                    setFetchProgress(null);
+                    try {
+                      const { aggregatedOwnership } = await yahooService.getMultiSeasonRosters(
+                        selectedLeague!.id,
+                        { onProgress: (p) => setFetchProgress(p) }
+                      );
+                      setManagerOwnership(aggregatedOwnership);
+                      await loadTendencies(aggregatedOwnership);
+                    } catch (err: any) {
+                      setError(`Failed to load data: ${err.message}`);
+                    } finally {
+                      setLoading(false);
+                      setFetchProgress(null);
+                    }
+                  } else if (managerTendencies.length === 0) {
+                    await loadTendencies(managerOwnership);
+                  }
+                }},
                 { id: 'owner-position', icon: <Target size={15} />, label: 'Owner Position', onClick: () => setDashboardTab('owner-position') },
                 { id: 'keepers', icon: <Shield size={15} />, label: 'Keepers', onClick: () => { setDashboardTab('keepers'); handleLoadKeepers(); } },
               ] as const).map(({ id, icon, label, onClick, badge }: any) => {
@@ -926,8 +915,18 @@ const App: React.FC = () => {
                             {team.players.length === 0 && (
                               <div style={{ padding: '1rem 1.25rem', color: 'var(--text-muted)', fontSize: '0.8rem', fontFamily: "'Outfit', sans-serif" }}>No players found</div>
                             )}
-                            {team.players.map((player, idx) => {
-                              const isIRDivider = idx > 0 && player.isOnIR && !team.players[idx - 1].isOnIR;
+                            {[...team.players].sort((a, b) => {
+                              if (a.isOnIR !== b.isOnIR) return a.isOnIR ? 1 : -1;
+                              const posOrder = ['QB', 'RB', 'WR', 'TE', 'K', 'DEF', 'D/ST'];
+                              const ai = posOrder.indexOf(a.position);
+                              const bi = posOrder.indexOf(b.position);
+                              const posDiff = (ai === -1 ? 99 : ai) - (bi === -1 ? 99 : bi);
+                              if (posDiff !== 0) return posDiff;
+                              const ar = dynastyRankings.get(a.playerName.toLowerCase())?.overallRank ?? Infinity;
+                              const br = dynastyRankings.get(b.playerName.toLowerCase())?.overallRank ?? Infinity;
+                              return ar - br;
+                            }).map((player, idx, sorted) => {
+                              const isIRDivider = idx > 0 && player.isOnIR && !sorted[idx - 1].isOnIR;
                               const nameLower = player.playerName.toLowerCase();
                               const timesKept = keeperTimesKept.get(nameLower) ?? 0;
                               const draftRound = draftRoundByName.get(nameLower);
@@ -981,15 +980,21 @@ const App: React.FC = () => {
                                       <div style={{ fontFamily: "'Outfit', sans-serif", fontSize: '0.7rem', color: 'var(--text-muted)', display: 'flex', gap: '0.35rem', alignItems: 'center', marginTop: '0.05rem' }}>
                                         <span>{player.nflTeam || '—'}</span>
                                         {player.acquisitionDate && <><span style={{ opacity: 0.35 }}>·</span><span>{player.acquisitionDate}</span></>}
+                                        {(() => {
+                                          const fc = dynastyRankings.get(player.playerName.toLowerCase());
+                                          if (!fc) return null;
+                                          const color = fc.overallRank <= 75 ? '#22A85F' : fc.overallRank <= 150 ? '#D4A017' : '#E05252';
+                                          return <><span style={{ opacity: 0.35 }}>·</span><span style={{ color }}>#{fc.overallRank}</span></>;
+                                        })()}
                                       </div>
                                     </div>
 
                                     {/* Acquisition type badge */}
                                     <div style={{
                                       fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700,
-                                      fontSize: '0.58rem', letterSpacing: '0.1em',
+                                      fontSize: '0.7rem', letterSpacing: '0.08em',
                                       color: acqBadge.text, background: acqBadge.bg,
-                                      padding: '0.15rem 0.45rem', borderRadius: '3px',
+                                      padding: '0.2rem 0.55rem', borderRadius: '3px',
                                       whiteSpace: 'nowrap', flexShrink: 0,
                                     }}>{acqBadge.label}</div>
                                   </div>
@@ -1070,7 +1075,7 @@ const App: React.FC = () => {
                 <ManagerInsights
                   ownershipData={managerOwnership}
                   tendencies={managerTendencies}
-                  loading={loading}
+                  loading={tendenciesLoading}
                   fetchProgress={fetchProgress}
                   onRefreshTendency={handleRefreshTendency}
                   refreshingManagers={refreshingManagers}

@@ -9,7 +9,7 @@ interface Props {
   onRefresh: () => void;
 }
 
-const BACKEND = 'http://localhost:3001/api';
+const BACKEND = '/api';
 
 const POSITION_STYLES: Record<string, React.CSSProperties> = {
   QB:  { background: 'rgba(239,68,68,0.12)',  color: '#F87171', border: '1px solid rgba(239,68,68,0.28)' },

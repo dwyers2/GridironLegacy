@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { SeasonDraftData, DraftPick } from '../types';
 import { ChevronDown, ChevronRight, Loader2, ClipboardList, Star } from 'lucide-react';
 
-const BACKEND_URL = 'http://localhost:3001/api';
+const BACKEND_URL = '/api';
 
 interface Props {
   draftSeasons: SeasonDraftData[];

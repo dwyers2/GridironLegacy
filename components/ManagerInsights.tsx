@@ -9,6 +9,7 @@ interface ManagerInsightsProps {
   fetchProgress?: FetchProgress | null;
   onRefreshTendency?: (managerId: string) => void;
   refreshingManagers?: Set<string>;
+  loadingManagerIds?: Set<string>;
   tab?: 'ownership' | 'tendencies';
 }
 
@@ -32,6 +33,7 @@ const ManagerInsights: React.FC<ManagerInsightsProps> = ({
   fetchProgress,
   onRefreshTendency,
   refreshingManagers,
+  loadingManagerIds,
   tab,
 }) => {
   const [activeTab, setActiveTab] = useState<'ownership' | 'tendencies'>('ownership');
@@ -310,157 +312,208 @@ const ManagerInsights: React.FC<ManagerInsightsProps> = ({
     </div>
   );
 
+  // Render cards for every manager in ownershipData, regardless of whether their tendency is ready
+  const tendencyMap = new Map(tendencies.map(t => [t.managerId, t]));
   const tendenciesContent = (
     <div style={{ display: 'grid', gap: '1.25rem', gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))' }}>
-      {tendencies.map((tendency) => (
-        <div
-          key={tendency.managerId}
-          style={{
-            background: 'var(--surface)', border: '1px solid var(--border)',
-            borderRadius: '10px', padding: '1.75rem',
-            transition: 'border-color 0.2s',
-          }}
-          onMouseEnter={e => (e.currentTarget.style.borderColor = 'rgba(212,160,23,0.25)')}
-          onMouseLeave={e => (e.currentTarget.style.borderColor = 'var(--border)')}
-        >
-          {/* Card header */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.875rem', marginBottom: '1.5rem' }}>
-            <div style={{
-              padding: '0.6rem', background: 'var(--gold-dim)',
-              border: '1px solid rgba(212,160,23,0.2)', borderRadius: '8px', flexShrink: 0,
-            }}>
-              <Sparkles style={{ color: 'var(--gold)' }} size={18} />
-            </div>
-            <div style={{ flex: 1 }}>
-              <h3 style={{
-                fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700,
-                fontSize: '1.2rem', letterSpacing: '0.04em',
-                color: 'var(--text-primary)', margin: 0,
-              }}>
-                {tendency.managerName}
-              </h3>
-              <p style={{
-                fontFamily: "'Barlow Condensed', sans-serif",
-                fontSize: '0.6rem', letterSpacing: '0.18em',
-                color: 'var(--text-muted)', textTransform: 'uppercase', margin: '0.2rem 0 0',
-              }}>
-                AI Analysis
-              </p>
-            </div>
-            {onRefreshTendency && (
-              <button
-                onClick={() => onRefreshTendency(tendency.managerId)}
-                disabled={refreshingManagers?.has(tendency.managerId)}
-                style={{
-                  padding: '0.4rem', borderRadius: '6px',
-                  background: 'rgba(255,255,255,0.04)', border: '1px solid var(--border-muted)',
-                  cursor: refreshingManagers?.has(tendency.managerId) ? 'not-allowed' : 'pointer',
-                  opacity: refreshingManagers?.has(tendency.managerId) ? 0.4 : 1,
-                  transition: 'all 0.15s',
-                }}
-                onMouseEnter={e => {
-                  if (!refreshingManagers?.has(tendency.managerId)) {
-                    e.currentTarget.style.background = 'var(--gold-dim)';
-                    e.currentTarget.style.borderColor = 'rgba(212,160,23,0.2)';
-                  }
-                }}
-                onMouseLeave={e => {
-                  e.currentTarget.style.background = 'rgba(255,255,255,0.04)';
-                  e.currentTarget.style.borderColor = 'var(--border-muted)';
-                }}
-                title="Refresh AI summary"
-              >
-                <RefreshCw
-                  size={14}
-                  style={{
-                    color: 'var(--text-muted)',
-                    animation: refreshingManagers?.has(tendency.managerId) ? 'spin 1s linear infinite' : 'none',
-                  }}
-                />
-              </button>
-            )}
-          </div>
+      {ownershipData.map((manager) => {
+        const tendency = tendencyMap.get(manager.managerId);
+        const isCardLoading = loadingManagerIds?.has(manager.managerId) || (!tendency && (loadingManagerIds?.size ?? 0) > 0);
+        const managerId = manager.managerId;
+        const managerName = tendency?.managerName ?? manager.managerName;
 
-          {/* Stats row */}
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', marginBottom: '1.25rem' }}>
-            <div style={{
-              background: 'var(--surface-2)', border: '1px solid var(--border)',
-              borderRadius: '6px', padding: '1rem',
-            }}>
+        return (
+          <div
+            key={managerId}
+            style={{
+              background: 'var(--surface)', border: '1px solid var(--border)',
+              borderRadius: '10px', padding: '1.75rem',
+              transition: 'border-color 0.2s',
+            }}
+            onMouseEnter={e => (e.currentTarget.style.borderColor = 'rgba(212,160,23,0.25)')}
+            onMouseLeave={e => (e.currentTarget.style.borderColor = 'var(--border)')}
+          >
+            {/* Card header */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.875rem', marginBottom: '1.5rem' }}>
               <div style={{
-                fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700,
-                fontSize: '0.6rem', letterSpacing: '0.18em',
-                color: 'var(--text-muted)', textTransform: 'uppercase', marginBottom: '0.5rem',
+                padding: '0.6rem', background: 'var(--gold-dim)',
+                border: '1px solid rgba(212,160,23,0.2)', borderRadius: '8px', flexShrink: 0,
               }}>
-                Loyalty Score
+                <Sparkles style={{ color: 'var(--gold)' }} size={18} />
               </div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-                <Heart style={{ color: 'var(--red)' }} size={14} />
-                <span style={{ fontFamily: "'Cinzel', serif", fontWeight: 900, fontSize: '1.4rem', color: 'var(--text-primary)' }}>
-                  {tendency.loyaltyScore}%
-                </span>
+              <div style={{ flex: 1 }}>
+                <h3 style={{
+                  fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700,
+                  fontSize: '1.2rem', letterSpacing: '0.04em',
+                  color: 'var(--text-primary)', margin: 0,
+                }}>
+                  {managerName}
+                </h3>
+                <p style={{
+                  fontFamily: "'Barlow Condensed', sans-serif",
+                  fontSize: '0.6rem', letterSpacing: '0.18em',
+                  color: isCardLoading ? 'var(--gold)' : 'var(--text-muted)',
+                  textTransform: 'uppercase', margin: '0.2rem 0 0',
+                }}>
+                  {isCardLoading ? 'Generating analysis...' : 'AI Analysis'}
+                </p>
               </div>
-            </div>
-            <div style={{
-              background: 'var(--surface-2)', border: '1px solid var(--border)',
-              borderRadius: '6px', padding: '1rem',
-            }}>
-              <div style={{
-                fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700,
-                fontSize: '0.6rem', letterSpacing: '0.18em',
-                color: 'var(--text-muted)', textTransform: 'uppercase', marginBottom: '0.5rem',
-              }}>
-                Top Position
-              </div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-                <TrendingUp style={{ color: 'var(--green)' }} size={14} />
-                <span style={{ fontFamily: "'Cinzel', serif", fontWeight: 900, fontSize: '1.4rem', color: 'var(--text-primary)' }}>
-                  {tendency.topPositions[0] || 'N/A'}
-                </span>
-              </div>
-            </div>
-          </div>
-
-          {/* Position preferences */}
-          <div style={{ marginBottom: '1.25rem' }}>
-            <div style={{
-              fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700,
-              fontSize: '0.6rem', letterSpacing: '0.18em',
-              color: 'var(--text-muted)', textTransform: 'uppercase', marginBottom: '0.6rem',
-            }}>
-              Position Preferences
-            </div>
-            <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap' }}>
-              {tendency.topPositions.map((pos, i) => (
-                <span
-                  key={pos}
+              {onRefreshTendency && tendency && !isCardLoading && (
+                <button
+                  onClick={() => onRefreshTendency(managerId)}
+                  disabled={refreshingManagers?.has(managerId)}
                   style={{
-                    padding: '0.25rem 0.65rem', borderRadius: '4px',
-                    fontSize: '0.75rem', fontWeight: 700,
-                    fontFamily: "'Barlow Condensed', sans-serif", letterSpacing: '0.06em',
-                    ...(i === 0
-                      ? { background: 'var(--gold-dim)', border: '1px solid rgba(212,160,23,0.25)', color: 'var(--gold)' }
-                      : { background: 'rgba(255,255,255,0.04)', border: '1px solid var(--border-muted)', color: 'var(--text-secondary)' }),
+                    padding: '0.4rem', borderRadius: '6px',
+                    background: 'rgba(255,255,255,0.04)', border: '1px solid var(--border-muted)',
+                    cursor: refreshingManagers?.has(managerId) ? 'not-allowed' : 'pointer',
+                    opacity: refreshingManagers?.has(managerId) ? 0.4 : 1,
+                    transition: 'all 0.15s',
                   }}
+                  onMouseEnter={e => {
+                    if (!refreshingManagers?.has(managerId)) {
+                      e.currentTarget.style.background = 'var(--gold-dim)';
+                      e.currentTarget.style.borderColor = 'rgba(212,160,23,0.2)';
+                    }
+                  }}
+                  onMouseLeave={e => {
+                    e.currentTarget.style.background = 'rgba(255,255,255,0.04)';
+                    e.currentTarget.style.borderColor = 'var(--border-muted)';
+                  }}
+                  title="Refresh AI summary"
                 >
-                  {pos}
-                </span>
-              ))}
+                  <RefreshCw
+                    size={14}
+                    style={{
+                      color: 'var(--text-muted)',
+                      animation: refreshingManagers?.has(managerId) ? 'spin 1s linear infinite' : 'none',
+                    }}
+                  />
+                </button>
+              )}
             </div>
-          </div>
 
-          {/* Analysis quote */}
-          <div style={{
-            background: 'var(--surface-2)', border: '1px solid var(--border)',
-            borderRadius: '6px', padding: '1.125rem 1.25rem',
-          }}>
-            <p style={{
-              color: 'var(--text-secondary)', fontFamily: "'Outfit', sans-serif",
-              fontStyle: 'italic', lineHeight: 1.65, fontSize: '0.875rem', margin: 0, fontWeight: 400,
-            }}>"{tendency.analysis}"</p>
+            {isCardLoading ? (
+              /* Loading skeleton */
+              <div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', marginBottom: '1.25rem' }}>
+                  {[0, 1].map(i => (
+                    <div key={i} style={{
+                      background: 'var(--surface-2)', border: '1px solid var(--border)',
+                      borderRadius: '6px', padding: '1rem', minHeight: '72px',
+                    }}>
+                      <div style={{ height: '8px', borderRadius: '4px', background: 'rgba(255,255,255,0.06)', marginBottom: '0.75rem', width: '60%' }} />
+                      <div style={{ height: '24px', borderRadius: '4px', background: 'rgba(255,255,255,0.04)', width: '45%' }} />
+                    </div>
+                  ))}
+                </div>
+                <div style={{ display: 'flex', gap: '0.4rem', marginBottom: '1.25rem' }}>
+                  {[0, 1, 2].map(i => (
+                    <div key={i} style={{ height: '24px', width: '48px', borderRadius: '4px', background: 'rgba(255,255,255,0.05)' }} />
+                  ))}
+                </div>
+                <div style={{
+                  background: 'var(--surface-2)', border: '1px solid var(--border)',
+                  borderRadius: '6px', padding: '1.125rem 1.25rem',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.6rem', minHeight: '68px',
+                }}>
+                  <div style={{
+                    width: '16px', height: '16px', flexShrink: 0,
+                    border: '2px solid rgba(212,160,23,0.2)',
+                    borderTop: '2px solid var(--gold)',
+                    borderRadius: '50%',
+                    animation: 'spin 1s linear infinite',
+                  }} />
+                  <span style={{
+                    color: 'var(--text-muted)', fontFamily: "'Outfit', sans-serif",
+                    fontSize: '0.8rem', fontStyle: 'italic',
+                  }}>Analyzing patterns...</span>
+                </div>
+              </div>
+            ) : tendency ? (
+              <>
+                {/* Stats row */}
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', marginBottom: '1.25rem' }}>
+                  <div style={{
+                    background: 'var(--surface-2)', border: '1px solid var(--border)',
+                    borderRadius: '6px', padding: '1rem',
+                  }}>
+                    <div style={{
+                      fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700,
+                      fontSize: '0.6rem', letterSpacing: '0.18em',
+                      color: 'var(--text-muted)', textTransform: 'uppercase', marginBottom: '0.5rem',
+                    }}>
+                      Loyalty Score
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                      <Heart style={{ color: 'var(--red)' }} size={14} />
+                      <span style={{ fontFamily: "'Cinzel', serif", fontWeight: 900, fontSize: '1.4rem', color: 'var(--text-primary)' }}>
+                        {tendency.loyaltyScore}%
+                      </span>
+                    </div>
+                  </div>
+                  <div style={{
+                    background: 'var(--surface-2)', border: '1px solid var(--border)',
+                    borderRadius: '6px', padding: '1rem',
+                  }}>
+                    <div style={{
+                      fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700,
+                      fontSize: '0.6rem', letterSpacing: '0.18em',
+                      color: 'var(--text-muted)', textTransform: 'uppercase', marginBottom: '0.5rem',
+                    }}>
+                      Top Position
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                      <TrendingUp style={{ color: 'var(--green)' }} size={14} />
+                      <span style={{ fontFamily: "'Cinzel', serif", fontWeight: 900, fontSize: '1.4rem', color: 'var(--text-primary)' }}>
+                        {tendency.topPositions[0] || 'N/A'}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Position preferences */}
+                <div style={{ marginBottom: '1.25rem' }}>
+                  <div style={{
+                    fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700,
+                    fontSize: '0.6rem', letterSpacing: '0.18em',
+                    color: 'var(--text-muted)', textTransform: 'uppercase', marginBottom: '0.6rem',
+                  }}>
+                    Position Preferences
+                  </div>
+                  <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap' }}>
+                    {tendency.topPositions.map((pos, i) => (
+                      <span
+                        key={pos}
+                        style={{
+                          padding: '0.25rem 0.65rem', borderRadius: '4px',
+                          fontSize: '0.75rem', fontWeight: 700,
+                          fontFamily: "'Barlow Condensed', sans-serif", letterSpacing: '0.06em',
+                          ...(i === 0
+                            ? { background: 'var(--gold-dim)', border: '1px solid rgba(212,160,23,0.25)', color: 'var(--gold)' }
+                            : { background: 'rgba(255,255,255,0.04)', border: '1px solid var(--border-muted)', color: 'var(--text-secondary)' }),
+                        }}
+                      >
+                        {pos}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Analysis quote */}
+                <div style={{
+                  background: 'var(--surface-2)', border: '1px solid var(--border)',
+                  borderRadius: '6px', padding: '1.125rem 1.25rem',
+                }}>
+                  <p style={{
+                    color: 'var(--text-secondary)', fontFamily: "'Outfit', sans-serif",
+                    fontStyle: 'italic', lineHeight: 1.65, fontSize: '0.875rem', margin: 0, fontWeight: 400,
+                  }}>"{tendency.analysis}"</p>
+                </div>
+              </>
+            ) : null}
           </div>
-        </div>
-      ))}
+        );
+      })}
     </div>
   );
 
