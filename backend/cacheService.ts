@@ -90,8 +90,14 @@ export function shouldFetchSeasonData(leagueKey: string): boolean {
   const cacheAge = db.getLeagueCacheAge(leagueKey);
   if (!cacheAge) return true;
 
+  const season = db.getLeagueSeason(leagueKey);
+  const currentYear = new Date().getFullYear().toString();
+  const isCurrentSeason = season === currentYear;
+
   const daysSinceCache = (Date.now() - cacheAge.getTime()) / (1000 * 60 * 60 * 24);
-  return daysSinceCache > 7; // Re-fetch if older than 7 days
+  // Past seasons never change — only re-fetch if somehow missing entirely
+  // Current season rosters update during the year — refresh daily
+  return isCurrentSeason ? daysSinceCache > 1 : false;
 }
 
 /**
