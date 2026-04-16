@@ -97,7 +97,7 @@ export const exchangeCodeForToken = async (code: string): Promise<{ access_token
 };
 
 // 3️⃣ Get access token (with auto-refresh)
-const getAccessToken = async (): Promise<string> => {
+export const getAccessToken = async (): Promise<string> => {
   let token = localStorage.getItem('yahoo_access_token');
   const expiresAt = localStorage.getItem('yahoo_access_token_expires');
 
@@ -261,7 +261,9 @@ export const getLeagues = async (): Promise<any[]> => {
           id: leagueData.league_key || leagueData.league_id || `unknown_${i}_${j}`,
           name: leagueData.name || 'Unknown League',
           seasons: [leagueData.season || '2024'],
-          sport: 'nfl'
+          sport: 'nfl',
+          isKeeperLeague: false, // will be overridden below by draft-pick detection
+          draftStatus: leagueData.draft_status || 'postdraft',
         };
 
         console.log('✅ Parsed league:', leagueInfo);
@@ -271,20 +273,37 @@ export const getLeagues = async (): Promise<any[]> => {
   }
 
   const currentYear = new Date().getFullYear();
+  const hasCurrentYearDrafted = allLeagues.some(
+    l => Number(l.seasons[0]) === currentYear && l.draftStatus !== 'predraft'
+  );
   const recentLeagues = allLeagues.filter(l => {
     const s = Number(l.seasons[0]);
-    return s === currentYear || s === currentYear - 1;
+    if (!(s === currentYear || s === currentYear - 1)) return false;
+    // Hide current-year leagues where the draft hasn't happened yet
+    if (s === currentYear && l.draftStatus === 'predraft') return false;
+    // Hide prior-year leagues once the current year has drafted (accessible via chain)
+    if (s === currentYear - 1 && hasCurrentYearDrafted) return false;
+    return true;
   });
 
-  // Of those, only show the most recent season
-  const mostRecentSeason = recentLeagues.reduce((max, l) => {
-    const s = Number(l.seasons[0]);
-    return s > max ? s : max;
-  }, 0);
-  const filtered = recentLeagues.filter(l => Number(l.seasons[0]) === mostRecentSeason);
+  console.log('📊 Showing leagues from current/prior year →', recentLeagues.length, 'league(s)');
 
-  console.log('📊 Showing season:', mostRecentSeason, '→', filtered.length, 'league(s)');
-  return filtered;
+  // Read keeper flag from DB (user-controlled, persists across sessions)
+  const leaguesWithKeeper = await Promise.all(
+    recentLeagues.map(async (league) => {
+      try {
+        const settingsRes = await fetch(`${BACKEND_URL}/league-settings/${encodeURIComponent(league.id)}`);
+        if (!settingsRes.ok) return league;
+        const { isKeeperLeague, maxKeepers, maxYearsKept } = await settingsRes.json();
+        // null means never been set — default false
+        return { ...league, isKeeperLeague: isKeeperLeague === true, maxKeepers: maxKeepers ?? null, maxYearsKept: maxYearsKept ?? null };
+      } catch (e) {
+        return league;
+      }
+    })
+  );
+
+  return leaguesWithKeeper;
 };
 
 // 5️⃣ Fetch manager insights
@@ -739,18 +758,21 @@ export const getMultiSeasonRosters = async (
 
   console.log(`🔗 Found ${leagueChain.length} linked seasons`);
 
-  // 💾 STEP 2: Check cache for which seasons we already have
+  // 💾 STEP 2: Check cache for which seasons we already have (scoped to this league chain)
   console.log(`💾 Checking cache...`);
   let cachedSeasons: string[] = [];
   let cachedManagers: ManagerOwnershipData[] = [];
 
+  const chainKeys = leagueChain.map(l => l.leagueKey);
+  const aggregatedUrl = `${BACKEND_URL}/cache/aggregated?leagueKeys=${encodeURIComponent(chainKeys.join(','))}`;
+
   try {
-    const cacheRes = await fetch(`${BACKEND_URL}/cache/aggregated`);
+    const cacheRes = await fetch(aggregatedUrl);
     if (cacheRes.ok) {
       const cacheData = await cacheRes.json();
       cachedSeasons = cacheData.cachedSeasons || [];
       cachedManagers = cacheData.managers || [];
-      console.log(`💾 Cached seasons: ${cachedSeasons.join(', ') || 'none'}`);
+      console.log(`💾 Cached seasons (this league): ${cachedSeasons.join(', ') || 'none'}`);
     }
   } catch (err: any) {
     console.log(`⚠️ Cache error: ${err.message}`);
@@ -814,15 +836,15 @@ export const getMultiSeasonRosters = async (
 
   console.log(`📊 Found data for ${allSeasonData.length} newly fetched league-seasons`);
 
-  // After fetching new data, reload the complete aggregated cache
+  // After fetching new data, reload the aggregated cache scoped to this league chain
   let finalAggregatedData: ManagerOwnershipData[] = [];
 
   try {
-    const finalCacheRes = await fetch(`${BACKEND_URL}/cache/aggregated`);
+    const finalCacheRes = await fetch(aggregatedUrl);
     if (finalCacheRes.ok) {
       const finalCache = await finalCacheRes.json();
       finalAggregatedData = finalCache.managers || [];
-      console.log(`📊 Final aggregated data: ${finalAggregatedData.length} managers across all seasons`);
+      console.log(`📊 Final aggregated data: ${finalAggregatedData.length} managers for this league`);
     }
   } catch (err: any) {
     console.warn(`⚠️ Could not reload final cache, using cached data:`, err.message);
@@ -1139,7 +1161,7 @@ const fetchLeagueDraftResults = async (
   }
 
   const count = draftResultsWrapper.count || 0;
-  const rawPicks: Array<{ round: number; pick: number; teamKey: string; playerKey: string }> = [];
+  const rawPicks: Array<{ round: number; pick: number; teamKey: string; playerKey: string; cost?: number; isKeeper?: boolean }> = [];
 
   for (let i = 0; i < count; i++) {
     const dr = draftResultsWrapper[i]?.draft_result;
@@ -1149,6 +1171,8 @@ const fetchLeagueDraftResults = async (
       pick: parseInt(dr.pick),
       teamKey: dr.team_key,
       playerKey: dr.player_key || '',
+      cost: dr.cost !== undefined ? parseInt(dr.cost) : undefined,
+      isKeeper: dr.is_keeper === '1' || dr.is_keeper === 1,
     });
   }
 
@@ -1236,10 +1260,12 @@ const fetchLeagueDraftResults = async (
     }
   }
 
+  const isAuction = rawPicks.some(rp => rp.cost !== undefined && rp.cost > 0);
+
   const picks: DraftPick[] = rawPicks.map((rp) => {
     const info = playerInfoMap.get(rp.playerKey);
     const originalTeamKey = originalOwnerMap.get(rp.pick);
-    const wasTraded = originalTeamKey !== undefined && originalTeamKey !== rp.teamKey;
+    const wasTraded = !isAuction && originalTeamKey !== undefined && originalTeamKey !== rp.teamKey;
     return {
       round: rp.round,
       pick: rp.pick,
@@ -1248,6 +1274,8 @@ const fetchLeagueDraftResults = async (
       playerName: info?.playerName || '',
       position: info?.position || '',
       nflTeam: info?.nflTeam || '',
+      playerKey: rp.playerKey,
+      cost: rp.cost,
       originalManagerName: wasTraded ? (teamMap.get(originalTeamKey!) || originalTeamKey) : undefined,
     };
   });
@@ -1278,6 +1306,8 @@ const fetchLeagueDraftResults = async (
           playerName: picks[idx].playerName,
           position: picks[idx].position,
           nflTeam: picks[idx].nflTeam,
+          cost: rp.cost ?? null,
+          managerName: picks[idx].managerName,
         })),
         trades,
         ...(chainOpts ? { rootKey: chainOpts.rootKey, chain: chainOpts.chain } : {}),
@@ -1286,7 +1316,7 @@ const fetchLeagueDraftResults = async (
   } catch (_) {}
 
   const teams = teamsFromPicks(picks);
-  return { season, leagueKey, picks, teams };
+  return { season, leagueKey, picks, teams, isAuction };
 };
 
 // 🏈 Get multi-season draft results (follows renew links, uses cache)
@@ -1314,13 +1344,18 @@ export const getMultiSeasonDraftResults = async (
               playerName: p.player_name,
               position: p.position,
               nflTeam: p.nfl_team,
+              playerKey: p.player_key || undefined,
+              seasonPoints: p.season_points ?? undefined,
+              cost: p.cost ?? undefined,
               originalManagerName: p.original_manager_name || undefined,
             }));
+            const isAuction = picks.some(p => (p.cost ?? 0) > 0);
             return {
               season: s.season,
               leagueKey: s.leagueKey,
               picks,
               teams: teamsFromPicks(picks),
+              isAuction,
             };
           });
         results.sort((a, b) => Number(b.season) - Number(a.season));
@@ -1364,6 +1399,7 @@ export const getMultiSeasonDraftResults = async (
             playerName: p.player_name,
             position: p.position,
             nflTeam: p.nfl_team,
+            cost: p.cost ?? undefined,
             originalManagerName: p.original_manager_name || undefined,
           }));
           results.push({
@@ -1371,6 +1407,7 @@ export const getMultiSeasonDraftResults = async (
             leagueKey,
             picks: cachedPicks,
             teams: teamsFromPicks(cachedPicks),
+            isAuction: cachedPicks.some(p => (p.cost ?? 0) > 0),
           });
           continue;
         }

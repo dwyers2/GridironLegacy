@@ -4,6 +4,12 @@ export interface League {
   name: string;
   seasons: string[];
   sport: string;
+  /** false only when Yahoo explicitly says is_keeper_league=0 */
+  isKeeperLeague: boolean;
+  /** Maximum keepers allowed per team, null = no limit set */
+  maxKeepers?: number | null;
+  /** Maximum consecutive years a player can be kept, null = no limit set */
+  maxYearsKept?: number | null;
 }
 
 export interface PlayerStats {
@@ -80,6 +86,11 @@ export interface DraftPick {
   playerName: string;
   position: string;
   nflTeam: string;
+  playerKey?: string;
+  /** Season total fantasy points scored */
+  seasonPoints?: number;
+  /** Auction cost (auction leagues only) */
+  cost?: number;
   /** Set when this pick slot was acquired via trade; holds the original owner's name */
   originalManagerName?: string;
   /** User-designated keeper from a prior season */
@@ -92,6 +103,8 @@ export interface SeasonDraftData {
   picks: DraftPick[];
   // Ordered by draft slot (round-1 pick order)
   teams: Array<{ teamKey: string; managerName: string; draftSlot: number }>;
+  /** True for auction-format drafts */
+  isAuction?: boolean;
 }
 
 export interface KeeperEntry {

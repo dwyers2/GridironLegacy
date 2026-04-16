@@ -54,6 +54,30 @@ export function initializeDatabase() {
     CREATE INDEX IF NOT EXISTS idx_transactions_season ON transactions(league_key, season);
   `);
 
+  // Migration: add is_keeper_league to leagues table
+  const leagueColumns = (db.pragma('table_info(leagues)') as any[]).map((c: any) => c.name);
+  if (!leagueColumns.includes('is_keeper_league')) {
+    db.exec('ALTER TABLE leagues ADD COLUMN is_keeper_league INTEGER DEFAULT NULL');
+  }
+  if (!leagueColumns.includes('max_keepers')) {
+    db.exec('ALTER TABLE leagues ADD COLUMN max_keepers INTEGER DEFAULT NULL');
+  }
+  if (!leagueColumns.includes('max_years_kept')) {
+    db.exec('ALTER TABLE leagues ADD COLUMN max_years_kept INTEGER DEFAULT NULL');
+  }
+
+  // Migration: add cost and manager_name columns to draft_picks
+  const draftPickColumns = (db.pragma('table_info(draft_picks)') as any[]).map((c: any) => c.name);
+  if (!draftPickColumns.includes('cost')) {
+    db.exec('ALTER TABLE draft_picks ADD COLUMN cost INTEGER DEFAULT NULL');
+  }
+  if (!draftPickColumns.includes('manager_name')) {
+    db.exec('ALTER TABLE draft_picks ADD COLUMN manager_name TEXT DEFAULT NULL');
+  }
+  if (!draftPickColumns.includes('season_points')) {
+    db.exec('ALTER TABLE draft_picks ADD COLUMN season_points REAL DEFAULT NULL');
+  }
+
   // FantasyCalc dynasty rankings cache
   db.exec(`
     CREATE TABLE IF NOT EXISTS fantasycalc_players (
@@ -68,6 +92,37 @@ export function initializeDatabase() {
   `);
 
   console.log('✅ Database initialized');
+}
+
+// Get/set keeper league flag (stored per root league key)
+export function getIsKeeperLeague(leagueKey: string): boolean | null {
+  const row = db.prepare('SELECT is_keeper_league FROM leagues WHERE league_key = ?').get(leagueKey) as any;
+  if (!row || row.is_keeper_league === null || row.is_keeper_league === undefined) return null;
+  return row.is_keeper_league === 1;
+}
+
+export function setIsKeeperLeague(leagueKey: string, value: boolean) {
+  db.prepare('UPDATE leagues SET is_keeper_league = ? WHERE league_key = ?').run(value ? 1 : 0, leagueKey);
+}
+
+export function getMaxKeepers(leagueKey: string): number | null {
+  const row = db.prepare('SELECT max_keepers FROM leagues WHERE league_key = ?').get(leagueKey) as any;
+  if (!row || row.max_keepers === null || row.max_keepers === undefined) return null;
+  return row.max_keepers as number;
+}
+
+export function setMaxKeepers(leagueKey: string, value: number | null) {
+  db.prepare('UPDATE leagues SET max_keepers = ? WHERE league_key = ?').run(value, leagueKey);
+}
+
+export function getMaxYearsKept(leagueKey: string): number | null {
+  const row = db.prepare('SELECT max_years_kept FROM leagues WHERE league_key = ?').get(leagueKey) as any;
+  if (!row || row.max_years_kept === null || row.max_years_kept === undefined) return null;
+  return row.max_years_kept as number;
+}
+
+export function setMaxYearsKept(leagueKey: string, value: number | null) {
+  db.prepare('UPDATE leagues SET max_years_kept = ? WHERE league_key = ?').run(value, leagueKey);
 }
 
 // Cache a league
@@ -261,6 +316,72 @@ export function getAllManagersWithRosters() {
   });
 }
 
+// Get managers scoped to a specific set of league keys (one league's history chain)
+export function getManagersWithRostersByLeagueKeys(leagueKeys: string[]) {
+  if (leagueKeys.length === 0) return getAllManagersWithRosters();
+
+  const ph = leagueKeys.map(() => '?').join(',');
+
+  const managers = db.prepare(`
+    SELECT DISTINCT manager_id, manager_name FROM teams
+    WHERE league_key IN (${ph})
+    ORDER BY manager_name
+  `).all(...leagueKeys) as Array<{ manager_id: string; manager_name: string }>;
+
+  return managers.map(manager => {
+    const seasons = db.prepare(`
+      SELECT DISTINCT season FROM teams
+      WHERE manager_id = ? AND league_key IN (${ph})
+      ORDER BY season DESC
+    `).all(manager.manager_id, ...leagueKeys).map((row: any) => row.season);
+
+    const players = db.prepare(`
+      SELECT
+        p.player_id,
+        p.player_name,
+        p.position,
+        p.nfl_team,
+        COUNT(DISTINCT r.season) as times_owned,
+        GROUP_CONCAT(DISTINCT r.season) as seasons
+      FROM roster_entries r
+      JOIN teams t ON r.team_key = t.team_key
+      JOIN players p ON r.player_id = p.player_id
+      WHERE t.manager_id = ? AND t.league_key IN (${ph})
+      GROUP BY p.player_id
+      ORDER BY times_owned DESC, p.player_name
+    `).all(manager.manager_id, ...leagueKeys) as Array<{
+      player_id: string;
+      player_name: string;
+      position: string;
+      nfl_team: string;
+      times_owned: number;
+      seasons: string;
+    }>;
+
+    return {
+      managerId: manager.manager_id,
+      managerName: manager.manager_name,
+      seasonsTracked: seasons,
+      players: players.map(p => ({
+        playerId: p.player_id,
+        playerName: p.player_name,
+        position: p.position,
+        team: p.nfl_team,
+        timesOwned: p.times_owned,
+        seasons: p.seasons.split(',')
+      }))
+    };
+  });
+}
+
+// Get cached seasons scoped to a specific set of league keys
+export function getCachedSeasonsByLeagueKeys(leagueKeys: string[]): string[] {
+  if (leagueKeys.length === 0) return getCachedSeasons();
+  const ph = leagueKeys.map(() => '?').join(',');
+  const stmt = db.prepare(`SELECT DISTINCT season FROM leagues WHERE league_key IN (${ph}) ORDER BY season DESC`);
+  return (stmt.all(...leagueKeys) as Array<{ season: string }>).map(r => r.season);
+}
+
 // Check if we have cached data for a specific season/league
 export function hasSeasonData(leagueKey: string): boolean {
   const stmt = db.prepare(`SELECT COUNT(*) as count FROM leagues WHERE league_key = ?`);
@@ -383,14 +504,27 @@ export function cacheDraftPicks(picks: Array<{
   playerName: string;
   position: string;
   nflTeam: string;
+  cost?: number;
+  managerName?: string;
 }>) {
   const stmt = db.prepare(`
-    INSERT OR REPLACE INTO draft_picks (league_key, season, round, pick, team_key, player_key, player_name, position, nfl_team, last_updated)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+    INSERT OR REPLACE INTO draft_picks (league_key, season, round, pick, team_key, player_key, player_name, position, nfl_team, cost, manager_name, last_updated)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
   `);
   const transaction = db.transaction(() => {
     for (const p of picks) {
-      stmt.run(p.leagueKey, p.season, p.round, p.pick, p.teamKey, p.playerKey, p.playerName, p.position, p.nflTeam);
+      stmt.run(p.leagueKey, p.season, p.round, p.pick, p.teamKey, p.playerKey, p.playerName, p.position, p.nflTeam, p.cost ?? null, p.managerName ?? null);
+    }
+  });
+  transaction();
+}
+
+// Store season fantasy points per player key for a given league/season
+export function updateDraftPickPoints(leagueKey: string, season: string, points: Record<string, number>) {
+  const stmt = db.prepare(`UPDATE draft_picks SET season_points = ? WHERE league_key = ? AND season = ? AND player_key = ?`);
+  const transaction = db.transaction(() => {
+    for (const [playerKey, pts] of Object.entries(points)) {
+      stmt.run(pts, leagueKey, season, playerKey);
     }
   });
   transaction();
@@ -417,14 +551,14 @@ export function getDraftResultsForLeague(leagueKey: string): Array<{
   // Join with players table using the numeric part of player_key ("423.p.30977" -> "30977")
   // Falls back to stored player_name if player not in players table yet
   return db.prepare(`
-    SELECT dp.round, dp.pick, dp.team_key, dp.player_key, dp.season,
+    SELECT dp.round, dp.pick, dp.team_key, dp.player_key, dp.season, dp.cost, dp.season_points,
            CASE WHEN dp.player_name != '' THEN dp.player_name
                 ELSE COALESCE(p.player_name, dp.player_key) END as player_name,
            CASE WHEN dp.position != '' THEN dp.position
                 ELSE COALESCE(p.position, '') END as position,
            CASE WHEN dp.nfl_team != '' THEN dp.nfl_team
                 ELSE COALESCE(p.nfl_team, '') END as nfl_team,
-           COALESCE(t.manager_name, dp.team_key) as manager_name,
+           COALESCE(t.manager_name, dp.manager_name, dp.team_key) as manager_name,
            dpt.original_team_key,
            COALESCE(t2.manager_name, dpt.original_team_key) as original_manager_name
     FROM draft_picks dp
@@ -507,6 +641,26 @@ export function getChainContaining(leagueKey: string): Array<{ leagueKey: string
     } catch { /* skip */ }
   }
   return null;
+}
+
+// Clear all draft picks (and chain metadata) for every league in the chain containing rootKey
+export function clearDraftCacheForChain(rootKey: string): { deletedPicks: number; leaguesCleared: string[] } {
+  // Find chain via direct lookup first, then search all chains
+  let chain = getLeagueChain(rootKey) ?? getChainContaining(rootKey);
+  const leagueKeys = chain ? chain.map(c => c.leagueKey) : [rootKey];
+
+  let deletedPicks = 0;
+  for (const key of leagueKeys) {
+    const result = db.prepare(`DELETE FROM draft_picks WHERE league_key = ?`).run(key);
+    deletedPicks += result.changes;
+    db.prepare(`DELETE FROM draft_pick_trades WHERE league_key = ?`).run(key);
+    // Also delete any chain entry that uses this key as root
+    db.prepare(`DELETE FROM cache_metadata WHERE key = ?`).run(`draft_chain:${key}`);
+  }
+  // Delete the chain entry for the provided rootKey too (covers renamed roots)
+  db.prepare(`DELETE FROM cache_metadata WHERE key = ?`).run(`draft_chain:${rootKey}`);
+
+  return { deletedPicks, leaguesCleared: leagueKeys };
 }
 
 // Times a player has been kept consecutively counting back from priorSeason

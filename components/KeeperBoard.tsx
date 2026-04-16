@@ -1,12 +1,15 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { KeeperSummary, KeeperEntry } from '../types';
 import { Loader2, Star, Shield, Plus, X } from 'lucide-react';
+import { useIsMobile } from '../hooks/useIsMobile';
 
 interface Props {
   summary: KeeperSummary | null;
   loading: boolean;
   leagueKey: string;
   onRefresh: () => void;
+  maxKeepers?: number | null;
+  maxYearsKept?: number | null;
 }
 
 const BACKEND = '/api';
@@ -25,16 +28,9 @@ function posStyle(pos: string): React.CSSProperties {
 }
 
 function StreakBadge({ years }: { years: number }) {
-  if (years <= 1) return null;
+  if (years < 1) return null;
 
-  const tier = years >= 5 ? 'legend' : years >= 3 ? 'veteran' : 'rising';
-  const styles: Record<string, React.CSSProperties> = {
-    rising:  { background: 'rgba(59,130,246,0.12)',  color: '#60A5FA', border: '1px solid rgba(59,130,246,0.3)' },
-    veteran: { background: 'rgba(212,160,23,0.14)',  color: '#D4A017', border: '1px solid rgba(212,160,23,0.4)' },
-    legend:  { background: 'rgba(239,68,68,0.12)',   color: '#F87171', border: '1px solid rgba(239,68,68,0.35)' },
-  };
-
-  const starCount = Math.min(years, 3);
+  const starCount = Math.min(years, 5);
 
   return (
     <span style={{
@@ -44,7 +40,7 @@ function StreakBadge({ years }: { years: number }) {
       fontFamily: "'Barlow Condensed', sans-serif", letterSpacing: '0.1em',
       textTransform: 'uppercase',
       flexShrink: 0,
-      ...styles[tier],
+      background: 'rgba(212,160,23,0.14)', color: '#D4A017', border: '1px solid rgba(212,160,23,0.4)',
     }}>
       {Array.from({ length: starCount }).map((_, i) => (
         <Star key={i} size={8} style={{ fill: 'currentColor' }} />
@@ -150,7 +146,8 @@ function PlayerSearchInput({ onSelect, onCancel }: {
   );
 }
 
-function KeeperRow({ keeper, onRemove }: { keeper: KeeperEntry; onRemove?: () => void }) {
+const KeeperRow: React.FC<{ keeper: KeeperEntry; onRemove?: () => void; maxYearsKept?: number | null }> = ({ keeper, onRemove, maxYearsKept }) => {
+  const atYearsLimit = maxYearsKept != null && keeper.consecutiveYears >= maxYearsKept;
   return (
     <div style={{
       display: 'flex', alignItems: 'center', gap: '0.5rem',
@@ -184,6 +181,18 @@ function KeeperRow({ keeper, onRemove }: { keeper: KeeperEntry; onRemove?: () =>
       </div>
 
       <StreakBadge years={keeper.consecutiveYears} />
+      {atYearsLimit && (
+        <span title={`Kept ${keeper.consecutiveYears} consecutive years — not eligible to be kept again`} style={{
+          fontSize: '0.55rem', fontWeight: 700,
+          padding: '0.1rem 0.35rem', borderRadius: '3px',
+          background: 'rgba(239,68,68,0.12)', border: '1px solid rgba(239,68,68,0.35)',
+          color: '#F87171',
+          fontFamily: "'Barlow Condensed', sans-serif", letterSpacing: '0.08em',
+          flexShrink: 0,
+        }}>
+          MAX
+        </span>
+      )}
 
       {keeper.isManual ? (
         <span style={{
@@ -231,16 +240,17 @@ function KeeperRow({ keeper, onRemove }: { keeper: KeeperEntry; onRemove?: () =>
   );
 }
 
-function ManagerCard({
-  teamKey, managerName, keepers, leagueKey, onRefresh,
-}: {
+const ManagerCard: React.FC<{
   teamKey: string;
   managerName: string;
   keepers: KeeperEntry[];
   leagueKey: string;
   onRefresh: () => void;
-}) {
+  maxKeepers?: number | null;
+  maxYearsKept?: number | null;
+}> = ({ teamKey, managerName, keepers, leagueKey, onRefresh, maxKeepers, maxYearsKept }) => {
   const [isAdding, setIsAdding] = useState(false);
+  const atLimit = maxKeepers != null && keepers.length >= maxKeepers;
 
   const handleSelect = async (p: PlayerResult) => {
     setIsAdding(false);
@@ -293,11 +303,12 @@ function ManagerCard({
         <span style={{
           fontSize: '0.6rem', fontWeight: 700,
           padding: '0.15rem 0.5rem', borderRadius: '99px',
-          background: 'var(--gold-dim)', border: '1px solid rgba(212,160,23,0.2)',
-          color: 'var(--gold)',
+          background: atLimit ? 'rgba(239,68,68,0.12)' : 'var(--gold-dim)',
+          border: `1px solid ${atLimit ? 'rgba(239,68,68,0.35)' : 'rgba(212,160,23,0.2)'}`,
+          color: atLimit ? '#F87171' : 'var(--gold)',
           fontFamily: "'Barlow Condensed', sans-serif", letterSpacing: '0.1em',
         }}>
-          {keepers.length} {keepers.length === 1 ? 'keeper' : 'keepers'}
+          {maxKeepers != null ? `${keepers.length} / ${maxKeepers}` : `${keepers.length} ${keepers.length === 1 ? 'keeper' : 'keepers'}`}
         </span>
       </div>
 
@@ -317,6 +328,7 @@ function ManagerCard({
               key={k.playerKey + k.playerName + i}
               keeper={k}
               onRemove={k.isManual ? () => handleRemove(k) : undefined}
+              maxYearsKept={maxYearsKept}
             />
           ))
         )}
@@ -333,6 +345,18 @@ function ManagerCard({
             onSelect={handleSelect}
             onCancel={() => setIsAdding(false)}
           />
+        ) : atLimit ? (
+          <div style={{
+            display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.3rem',
+            padding: '0.3rem 0.6rem', borderRadius: '5px',
+            border: '1px dashed rgba(239,68,68,0.25)',
+            color: '#F87171', opacity: 0.6,
+            fontSize: '0.65rem', fontWeight: 600,
+            fontFamily: "'Barlow Condensed', sans-serif", letterSpacing: '0.08em',
+            textTransform: 'uppercase',
+          }}>
+            Max keepers reached ({maxKeepers})
+          </div>
         ) : (
           <button
             onClick={() => setIsAdding(true)}
@@ -364,7 +388,8 @@ function ManagerCard({
   );
 }
 
-export default function KeeperBoard({ summary, loading, leagueKey, onRefresh }: Props) {
+export default function KeeperBoard({ summary, loading, leagueKey, onRefresh, maxKeepers, maxYearsKept }: Props) {
+  const isMobile = useIsMobile();
   if (loading) {
     return (
       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '6rem 2rem', gap: '1rem' }}>
@@ -428,29 +453,16 @@ export default function KeeperBoard({ summary, loading, leagueKey, onRefresh }: 
         </div>
 
         {/* Legend */}
-        <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center', marginLeft: 'auto' }}>
-          <span style={{ fontSize: '0.6rem', color: 'var(--text-muted)', fontFamily: "'Outfit', sans-serif" }}>Streak:</span>
-          <span style={{ display: 'flex', alignItems: 'center', gap: '0.15rem', fontSize: '0.55rem', fontWeight: 700, padding: '0.1rem 0.4rem', borderRadius: '3px', background: 'rgba(59,130,246,0.12)', color: '#60A5FA', border: '1px solid rgba(59,130,246,0.3)', fontFamily: "'Barlow Condensed', sans-serif", letterSpacing: '0.1em' }}>
-            <Star size={8} style={{ fill: 'currentColor' }} />
-            <Star size={8} style={{ fill: 'currentColor' }} />
-          </span>
-          <span style={{ display: 'flex', alignItems: 'center', gap: '0.15rem', fontSize: '0.55rem', fontWeight: 700, padding: '0.1rem 0.4rem', borderRadius: '3px', background: 'rgba(212,160,23,0.14)', color: '#D4A017', border: '1px solid rgba(212,160,23,0.4)', fontFamily: "'Barlow Condensed', sans-serif", letterSpacing: '0.1em' }}>
-            <Star size={8} style={{ fill: 'currentColor' }} />
-            <Star size={8} style={{ fill: 'currentColor' }} />
-            <Star size={8} style={{ fill: 'currentColor' }} />
-          </span>
-          <span style={{ display: 'flex', alignItems: 'center', gap: '0.15rem', fontSize: '0.55rem', fontWeight: 700, padding: '0.1rem 0.4rem', borderRadius: '3px', background: 'rgba(239,68,68,0.12)', color: '#F87171', border: '1px solid rgba(239,68,68,0.35)', fontFamily: "'Barlow Condensed', sans-serif", letterSpacing: '0.1em' }}>
-            <Star size={8} style={{ fill: 'currentColor' }} />
-            <Star size={8} style={{ fill: 'currentColor' }} />
-            <Star size={8} style={{ fill: 'currentColor' }} />
-          </span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', marginLeft: 'auto', color: 'var(--text-muted)', fontFamily: "'Outfit', sans-serif", fontSize: '0.7rem' }}>
+          <Star size={10} style={{ fill: '#D4A017', color: '#D4A017', flexShrink: 0 }} />
+          <span>= years kept</span>
         </div>
       </div>
 
       {/* Manager grid */}
       <div style={{
         display: 'grid',
-        gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))',
+        gridTemplateColumns: isMobile ? '1fr' : 'repeat(auto-fill, minmax(260px, 1fr))',
         gap: '1rem',
       }}>
         {summary.managers.map(m => (
@@ -461,6 +473,8 @@ export default function KeeperBoard({ summary, loading, leagueKey, onRefresh }: 
             keepers={m.keepers}
             leagueKey={resolvedLeagueKey}
             onRefresh={onRefresh}
+            maxKeepers={maxKeepers}
+            maxYearsKept={maxYearsKept}
           />
         ))}
       </div>

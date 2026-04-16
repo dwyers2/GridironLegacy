@@ -4,6 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Dynasty Alchemy</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@700;900&family=Barlow+Condensed:wght@400;600;700&family=Outfit:wght@400;500;600&display=swap" rel="stylesheet">
     <style>
@@ -67,6 +68,38 @@
       .feature-card:hover {
         background: var(--surface-2) !important;
       }
+
+      body { overflow-x: hidden; }
+
+      .tab-bar-scroll {
+        overflow-x: auto;
+        scrollbar-width: none;
+        -webkit-overflow-scrolling: touch;
+      }
+      .tab-bar-scroll::-webkit-scrollbar { display: none; }
+
+      .tab-bar-wrap {
+        position: relative;
+      }
+      .tab-bar-wrap::after {
+        content: '';
+        position: absolute;
+        right: 0; top: 0; bottom: 1px;
+        width: 2.5rem;
+        background: linear-gradient(to right, transparent, var(--obsidian));
+        pointer-events: none;
+        z-index: 1;
+      }
+
+      .pill-scroll {
+        overflow-x: auto;
+        scrollbar-width: none;
+        -webkit-overflow-scrolling: touch;
+        display: flex;
+        gap: 0.5rem;
+        padding-bottom: 2px;
+      }
+      .pill-scroll::-webkit-scrollbar { display: none; }
     </style>
   <script type="importmap">
 {

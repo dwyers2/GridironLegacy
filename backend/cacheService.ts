@@ -83,6 +83,13 @@ export function getCachedAggregatedData() {
 }
 
 /**
+ * Get cached roster data scoped to a specific league's history chain
+ */
+export function getCachedAggregatedDataForLeagues(leagueKeys: string[]) {
+  return db.getManagersWithRostersByLeagueKeys(leagueKeys);
+}
+
+/**
  * Check if we should fetch fresh data for a season
  * Returns true if cache is older than 7 days or doesn't exist
  */
