@@ -6,11 +6,11 @@ import ManagerInsights from './components/ManagerInsights';
 import DraftResults from './components/DraftResults';
 import KeeperBoard from './components/KeeperBoard';
 import OwnerPositionGrid from './components/OwnerPositionGrid';
-import DynastyAlchemyLogo from './components/DynastyAlchemyLogo';
+import { useIsMobile } from './hooks/useIsMobile';
 import {
   LayoutDashboard, Users, Award,
-  ChevronRight, ArrowLeft, LogOut, Loader2, Sparkles,
-  Trophy, TrendingUp, ShieldAlert, ClipboardList, Target, Shield
+  ChevronRight, ChevronDown, ArrowLeft, LogOut, Loader2, Sparkles,
+  Trophy, TrendingUp, ShieldAlert, ClipboardList, Target, Shield, Settings, Star
 } from 'lucide-react';
 
 const App: React.FC = () => {
@@ -28,7 +28,7 @@ const App: React.FC = () => {
   const [fetchProgress, setFetchProgress] = useState<FetchProgress | null>(null);
   const [draftData, setDraftData] = useState<SeasonDraftData[]>([]);
   const [draftLoading, setDraftLoading] = useState(false);
-  const [dashboardTab, setDashboardTab] = useState<'overview' | 'draft' | 'ownership' | 'tendencies' | 'owner-position' | 'keepers'>('overview');
+  const [dashboardTab, setDashboardTab] = useState<'overview' | 'draft' | 'ownership' | 'tendencies' | 'owner-position' | 'keepers' | 'settings'>('overview');
   const [keeperSummary, setKeeperSummary] = useState<KeeperSummary | null>(null);
   const [keeperLoading, setKeeperLoading] = useState(false);
   const [refreshingManagers, setRefreshingManagers] = useState<Set<string>>(new Set());
@@ -38,6 +38,13 @@ const App: React.FC = () => {
   const [rosterCacheAge, setRosterCacheAge] = useState<string | null>(null);
   const [dynastyRankings, setDynastyRankings] = useState<Map<string, { overallRank: number; positionRank: number; value: number }>>(new Map());
   const [currentUserGuid, setCurrentUserGuid] = useState<string | null>(null);
+  const [leagueSwitcherOpen, setLeagueSwitcherOpen] = useState(false);
+  const leagueSwitcherRef = useRef<HTMLDivElement>(null);
+
+  const isMobile = useIsMobile();
+  const myManagerName = currentUserGuid
+    ? (currentRosters.find(t => t.managerId === currentUserGuid)?.managerName ?? null)
+    : null;
 
   // ✅ Prevent double-processing with ref
   const isProcessingOAuth = useRef(false);
@@ -158,6 +165,16 @@ const App: React.FC = () => {
   }, [currentStep]);
 
   useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (leagueSwitcherRef.current && !leagueSwitcherRef.current.contains(e.target as Node)) {
+        setLeagueSwitcherOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
+
+  useEffect(() => {
     if (leagues.length === 0 || currentStep !== AppState.LEAGUE_SELECT) return;
     const savedId = localStorage.getItem('last_league_id');
     if (!savedId) return;
@@ -173,6 +190,12 @@ const App: React.FC = () => {
     setLoading(true);
     setSelectedLeague(league);
     setError(null);
+    // Clear league-specific data so stale data from the previous league is not shown
+    setManagerOwnership([]);
+    setManagerTendencies([]);
+    if (['ownership', 'tendencies'].includes(dashboardTab)) {
+      setDashboardTab('overview');
+    }
     
     try {
       console.log('Loading league data for:', league.name);
@@ -203,13 +226,15 @@ const App: React.FC = () => {
       setDashboardTab('overview');
       setCurrentStep(AppState.DASHBOARD);
 
-      // Auto-load keeper summary in the background
-      setKeeperLoading(true);
-      fetch(`/api/keepers/summary/${encodeURIComponent(league.id)}`)
-        .then(r => r.ok ? r.json() : null)
-        .then(data => { if (data) setKeeperSummary(data); })
-        .catch(() => {})
-        .finally(() => setKeeperLoading(false));
+      // Auto-load keeper summary in the background (skip for non-keeper leagues)
+      if (league.isKeeperLeague !== false) {
+        setKeeperLoading(true);
+        fetch(`/api/keepers/summary/${encodeURIComponent(league.id)}`)
+          .then(r => r.ok ? r.json() : null)
+          .then(data => { if (data) setKeeperSummary(data); })
+          .catch(() => {})
+          .finally(() => setKeeperLoading(false));
+      }
 
       // Kick off draft history fetch in the background (non-blocking)
       setDraftLoading(true);
@@ -225,30 +250,42 @@ const App: React.FC = () => {
       setRosterLoading(true);
       setCurrentRosters([]);
       setTradeDeadline(null);
-      // Load cached snapshot instantly, then fetch live data from Yahoo
       const leagueSeason = league.seasons[0];
-      yahooService.getCachedCurrentRosters(league.id, leagueSeason).then(({ rosters, cacheAge }) => {
-        if (rosters.length > 0) {
-          setCurrentRosters(rosters);
-          setRosterCacheAge(cacheAge);
-        }
-      }).catch(() => {});
-      Promise.all([
-        yahooService.fetchCurrentRosters(league.id, leagueSeason),
-        yahooService.fetchTradeDeadline(league.id),
-      ]).then(([rosters, deadline]) => {
-        // Only update if the live fetch returned actual players; never blank out the cache
-        const totalPlayers = rosters.reduce((n, t) => n + t.players.length, 0);
-        if (totalPlayers > 0) {
-          setCurrentRosters(rosters);
-          setRosterCacheAge(null);
-        }
-        if (deadline) setTradeDeadline(deadline.display);
-      }).catch(err => {
-        console.warn('Current roster fetch failed:', err);
-      }).finally(() => {
-        setRosterLoading(false);
-      });
+      const isOffseason = leagueSeason && Number(leagueSeason) < new Date().getFullYear();
+
+      if (isOffseason) {
+        // Offseason: season is over, rosters can't change — serve from DB cache only
+        yahooService.getCachedCurrentRosters(league.id, leagueSeason).then(({ rosters, cacheAge }) => {
+          if (rosters.length > 0) {
+            setCurrentRosters(rosters);
+            setRosterCacheAge(cacheAge);
+          }
+        }).catch(() => {}).finally(() => setRosterLoading(false));
+      } else {
+        // Active season: load cached snapshot instantly, then fetch live data from Yahoo
+        yahooService.getCachedCurrentRosters(league.id, leagueSeason).then(({ rosters, cacheAge }) => {
+          if (rosters.length > 0) {
+            setCurrentRosters(rosters);
+            setRosterCacheAge(cacheAge);
+          }
+        }).catch(() => {});
+        Promise.all([
+          yahooService.fetchCurrentRosters(league.id, leagueSeason),
+          yahooService.fetchTradeDeadline(league.id),
+        ]).then(([rosters, deadline]) => {
+          // Only update if the live fetch returned actual players; never blank out the cache
+          const totalPlayers = rosters.reduce((n, t) => n + t.players.length, 0);
+          if (totalPlayers > 0) {
+            setCurrentRosters(rosters);
+            setRosterCacheAge(null);
+          }
+          if (deadline) setTradeDeadline(deadline.display);
+        }).catch(err => {
+          console.warn('Current roster fetch failed:', err);
+        }).finally(() => {
+          setRosterLoading(false);
+        });
+      }
 
       // Kick off dynasty rankings fetch in the background
       yahooService.fetchDynastyRankings().then(r => setDynastyRankings(r)).catch(() => {});
@@ -285,82 +322,99 @@ const App: React.FC = () => {
   const loadTendencies = async (ownership: ManagerOwnershipData[]) => {
     if (ownership.length === 0) return;
     setTendenciesLoading(true);
+
     try {
-      // Always check cache first — never bypass it based on whether roster data was re-fetched
+      // Step 1: get cached tendencies scoped to this league's managers only
       let cachedTendencies: ManagerTendency[] = [];
       try {
         const cacheRes = await fetch('/api/cache/tendencies');
         if (cacheRes.ok) {
           const cacheData = await cacheRes.json();
-          cachedTendencies = cacheData.tendencies || [];
-          console.log(`💾 Found ${cachedTendencies.length} cached tendencies`);
+          const allCached: ManagerTendency[] = cacheData.tendencies || [];
+          // Scope to current league's managers
+          const ownershipIds = new Set(ownership.map(m => m.managerId));
+          cachedTendencies = allCached.filter(t => ownershipIds.has(t.managerId));
+          console.log(`💾 Found ${cachedTendencies.length} cached tendencies for this league`);
         }
       } catch (err) {
         console.warn('⚠️ Could not check tendencies cache:', err);
       }
 
-      const managersNeedingAnalysis = ownership.filter(m => {
-        const cached = cachedTendencies.find(t => t.managerId === m.managerId);
-        if (!cached) return true;
-        const analysis = cached.analysis || '';
-        const isFallback = (analysis.includes('Prefers') && analysis.includes('positions. Loyalty:'))
-          || (analysis.includes('Favors') && analysis.includes('Loyalty score:'));
-        return isFallback;
+      // Step 2: get data-driven stats for all managers immediately (skipAI=true = fast)
+      const statsRes = await fetch('/api/manager-tendencies', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ managers: ownership, skipAI: true }),
+      });
+      const statsData = statsRes.ok ? await statsRes.json() : { tendencies: [] };
+      const statsTendencies: ManagerTendency[] = statsData.tendencies || [];
+
+      // Merge with cache: prefer cached (AI) over stats (data-driven)
+      const isRealAI = (t: ManagerTendency) => {
+        const a = t.analysis || '';
+        return !(
+          (a.includes('Favors') && a.includes('Loyalty score:')) ||
+          (a.includes('Prefers') && a.includes('positions. Loyalty:'))
+        );
+      };
+      const merged = statsTendencies.map(stat => {
+        const cached = cachedTendencies.find(t => t.managerId === stat.managerId);
+        return (cached && isRealAI(cached)) ? cached : stat;
       });
 
-      console.log(`🔍 ${managersNeedingAnalysis.length} managers need AI analysis`);
+      // Step 3: show all cards immediately
+      setManagerTendencies(merged);
+      setTendenciesLoading(false);
 
-      if (managersNeedingAnalysis.length === 0) {
-        console.log('✅ Using fully cached AI tendencies');
-        setManagerTendencies(cachedTendencies);
-        return;
-      }
+      // Step 4: fire per-manager AI calls for those still on data-driven text
+      const needsAI = merged.filter(t => !isRealAI(t));
+      if (needsAI.length === 0) return;
 
-      let finalTendencies: ManagerTendency[] = [];
-      try {
-        const newTendencies = await geminiService.getManagerTendencies(managersNeedingAnalysis);
-        const newTendencyMap = new Map(newTendencies.map(t => [t.managerId, t]));
-        finalTendencies = ownership.map(manager => {
-          if (newTendencyMap.has(manager.managerId)) return newTendencyMap.get(manager.managerId)!;
-          const cached = cachedTendencies.find(t => t.managerId === manager.managerId);
-          if (cached) return cached;
-          const players = manager.players || [];
-          const positionCounts: { [key: string]: number } = {};
-          players.forEach(p => {
-            if (p.position) positionCounts[p.position] = (positionCounts[p.position] || 0) + (p.timesOwned || 0);
-          });
-          const topPositions = Object.entries(positionCounts).sort(([,a],[,b]) => b-a).slice(0,3).map(([pos]) => pos);
-          const loyaltyScore = Math.round((players.filter(p => (p.timesOwned||0) > 1).length / Math.max(players.length,1)) * 100);
-          return { managerId: manager.managerId, managerName: manager.managerName, analysis: `Prefers ${topPositions.join(', ')} positions. Loyalty: ${loyaltyScore}%`, topPositions, loyaltyScore };
-        });
+      // Compute league context once
+      const loyaltyScores = merged.map(t => t.loyaltyScore).sort((a, b) => b - a);
+      const minLoyalty = Math.min(...loyaltyScores);
+      const maxLoyalty = Math.max(...loyaltyScores);
+      const avgLoyalty = Math.round(loyaltyScores.reduce((a, b) => a + b, 0) / loyaltyScores.length);
 
+      const managerMap = new Map(ownership.map(m => [m.managerId, m]));
+
+      const updatedTendencies = [...merged];
+      await Promise.all(needsAI.map(async (t) => {
+        const loyaltyRank = loyaltyScores.indexOf(t.loyaltyScore) + 1;
+        const loyaltyPercentile = 1 - (loyaltyRank - 1) / Math.max(merged.length - 1, 1);
+        const loyaltyDescription = loyaltyPercentile >= 0.8 ? 'one of the most loyal'
+          : loyaltyPercentile >= 0.6 ? 'more loyal than most'
+          : loyaltyPercentile >= 0.4 ? 'about average loyalty'
+          : loyaltyPercentile >= 0.2 ? 'less loyal than most'
+          : 'one of the least loyal';
+
+        setRefreshingManagers(prev => new Set(prev).add(t.managerId));
         try {
-          await fetch('/api/cache/tendencies', {
+          const res = await fetch('/api/manager-tendencies/single', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ tendencies: finalTendencies })
+            body: JSON.stringify({
+              manager: { ...managerMap.get(t.managerId), loyaltyScore: t.loyaltyScore, analysis: t.analysis },
+              leagueContext: { minLoyalty, maxLoyalty, avgLoyalty, loyaltyRank, totalManagers: merged.length, loyaltyDescription },
+            }),
           });
-          console.log('💾 AI tendencies cached');
-        } catch (cacheErr) {
-          console.warn('⚠️ Failed to cache tendencies:', cacheErr);
+          if (res.ok) {
+            const { tendency } = await res.json();
+            const idx = updatedTendencies.findIndex(x => x.managerId === t.managerId);
+            if (idx !== -1) updatedTendencies[idx] = tendency;
+            setManagerTendencies([...updatedTendencies]);
+          }
+        } finally {
+          setRefreshingManagers(prev => { const s = new Set(prev); s.delete(t.managerId); return s; });
         }
-      } catch (geminiErr) {
-        console.warn('⚠️ Gemini error, using cached + fallbacks:', geminiErr);
-        finalTendencies = ownership.map(manager => {
-          const cached = cachedTendencies.find(t => t.managerId === manager.managerId);
-          if (cached) return cached;
-          const players = manager.players || [];
-          const positionCounts: { [key: string]: number } = {};
-          players.forEach(p => {
-            if (p.position) positionCounts[p.position] = (positionCounts[p.position] || 0) + (p.timesOwned || 0);
-          });
-          const topPositions = Object.entries(positionCounts).sort(([,a],[,b]) => b-a).slice(0,3).map(([pos]) => pos);
-          const loyaltyScore = Math.round((players.filter(p => (p.timesOwned||0) > 1).length / Math.max(players.length,1)) * 100);
-          return { managerId: manager.managerId, managerName: manager.managerName, analysis: `Prefers ${topPositions.join(', ')} positions. Loyalty: ${loyaltyScore}%`, topPositions, loyaltyScore };
-        });
-      }
+      }));
 
-      setManagerTendencies(finalTendencies);
+      // Cache final results
+      fetch('/api/cache/tendencies', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tendencies: updatedTendencies }),
+      }).catch(() => {});
     } finally {
       setTendenciesLoading(false);
     }
@@ -573,7 +627,7 @@ const App: React.FC = () => {
             >
               <div style={{
                 display: 'grid',
-                gridTemplateColumns: 'repeat(auto-fit, minmax(230px, 1fr))',
+                gridTemplateColumns: 'repeat(auto-fit, minmax(min(230px, 100%), 1fr))',
                 border: '1px solid var(--border)',
                 borderRadius: '6px', overflow: 'hidden',
                 gap: '1px', background: 'var(--border)',
@@ -733,30 +787,91 @@ const App: React.FC = () => {
             {/* Header */}
             <div className="flex flex-col lg:flex-row lg:items-end justify-between gap-6">
               <div>
-                <button
-                  onClick={handleBack}
-                  style={{
-                    display: 'flex', alignItems: 'center', gap: '0.5rem',
-                    color: 'var(--text-muted)', background: 'none', border: 'none', cursor: 'pointer',
-                    fontFamily: "'Barlow Condensed', sans-serif",
-                    fontWeight: 700, fontSize: '0.75rem', letterSpacing: '0.15em',
-                    textTransform: 'uppercase', transition: 'color 0.2s', marginBottom: '1rem',
-                  }}
-                  onMouseEnter={e => (e.currentTarget.style.color = 'var(--text-primary)')}
-                  onMouseLeave={e => (e.currentTarget.style.color = 'var(--text-muted)')}
-                >
-                  <ArrowLeft size={14} /> Back to Leagues
-                </button>
                 <h1 style={{
                   fontFamily: "'Cinzel', serif",
                   fontWeight: 900, fontSize: 'clamp(1.8rem, 4vw, 3rem)',
                   letterSpacing: '0.04em', color: 'var(--text-primary)', margin: 0,
                 }}>{selectedLeague?.name.toUpperCase()}</h1>
               </div>
+
+              {/* League switcher */}
+              <div ref={leagueSwitcherRef} style={{ position: 'relative', alignSelf: 'flex-start' }}>
+                <button
+                  onClick={() => setLeagueSwitcherOpen(o => !o)}
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: '0.5rem',
+                    background: 'var(--surface)', border: '1px solid var(--border)',
+                    borderRadius: '6px', padding: '0.55rem 0.875rem',
+                    cursor: 'pointer', transition: 'all 0.15s',
+                    fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700,
+                    fontSize: '0.75rem', letterSpacing: '0.12em', textTransform: 'uppercase',
+                    color: 'var(--text-secondary)', whiteSpace: 'nowrap',
+                  }}
+                  onMouseEnter={e => { e.currentTarget.style.borderColor = 'rgba(212,160,23,0.3)'; e.currentTarget.style.color = 'var(--gold)'; }}
+                  onMouseLeave={e => { e.currentTarget.style.borderColor = 'var(--border)'; e.currentTarget.style.color = 'var(--text-secondary)'; }}
+                >
+                  Switch League
+                  <ChevronDown size={13} style={{ transition: 'transform 0.15s', transform: leagueSwitcherOpen ? 'rotate(180deg)' : 'none' }} />
+                </button>
+
+                {leagueSwitcherOpen && (
+                  <div style={{
+                    position: 'absolute', top: 'calc(100% + 0.5rem)', right: 0,
+                    background: 'var(--surface-2)', border: '1px solid var(--border)',
+                    borderRadius: '8px', overflow: 'hidden', zIndex: 200,
+                    minWidth: '220px', boxShadow: '0 8px 32px rgba(0,0,0,0.5)',
+                  }}>
+                    {leagues.map((league, i) => (
+                      <div
+                        key={league.id}
+                        style={{
+                          display: 'flex', alignItems: 'center',
+                          borderBottom: i < leagues.length - 1 ? '1px solid var(--border)' : 'none',
+                          background: league.id === selectedLeague?.id ? 'var(--gold-dim)' : 'transparent',
+                        }}
+                      >
+                        <button
+                          onClick={() => { setLeagueSwitcherOpen(false); handleSelectLeague(league); }}
+                          style={{
+                            flex: 1, display: 'flex', alignItems: 'center', gap: '0.5rem',
+                            padding: '0.75rem 1rem',
+                            background: 'transparent', border: 'none',
+                            cursor: league.id === selectedLeague?.id ? 'default' : 'pointer',
+                            fontFamily: "'Outfit', sans-serif", fontSize: '0.875rem', textAlign: 'left',
+                            color: league.id === selectedLeague?.id ? 'var(--gold)' : 'var(--text-primary)',
+                          }}
+                        >
+                          <span>{league.name}</span>
+                          {league.id === selectedLeague?.id && (
+                            <span style={{ width: '7px', height: '7px', borderRadius: '50%', background: 'var(--gold)', flexShrink: 0, display: 'inline-block' }} />
+                          )}
+                        </button>
+                        {league.isKeeperLeague && (
+                          <span style={{
+                            margin: '0 0.75rem',
+                            padding: '0.15rem 0.4rem',
+                            background: 'rgba(212,175,55,0.12)',
+                            border: '1px solid rgba(212,175,55,0.3)',
+                            borderRadius: '4px',
+                            color: 'var(--gold)',
+                            fontFamily: "'Barlow Condensed', sans-serif",
+                            fontSize: '0.6rem', fontWeight: 700,
+                            letterSpacing: '0.06em', textTransform: 'uppercase',
+                            pointerEvents: 'none', flexShrink: 0,
+                          }}>
+                            Keeper
+                          </span>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
             </div>
 
             {/* Tab Bar */}
-            <div style={{ display: 'flex', gap: '0.25rem', borderBottom: '1px solid var(--border)', paddingBottom: 0 }}>
+            <div className="tab-bar-wrap">
+            <div className="tab-bar-scroll" style={{ display: 'flex', gap: '0.25rem', borderBottom: '1px solid var(--border)', paddingBottom: 0 }}>
               {([
                 { id: 'overview', icon: <Users size={15} />, label: 'Current Roster', onClick: () => setDashboardTab('overview') },
                 {
@@ -793,7 +908,8 @@ const App: React.FC = () => {
                   }
                 }},
                 { id: 'owner-position', icon: <Target size={15} />, label: 'Owner Position', onClick: () => setDashboardTab('owner-position') },
-                { id: 'keepers', icon: <Shield size={15} />, label: 'Keepers', onClick: () => { setDashboardTab('keepers'); handleLoadKeepers(); } },
+                ...(selectedLeague?.isKeeperLeague !== false ? [{ id: 'keepers', icon: <Star size={15} />, label: 'Keepers', onClick: () => { setDashboardTab('keepers'); handleLoadKeepers(); } }] : []),
+                { id: 'settings', icon: <Settings size={15} />, label: 'Settings', onClick: () => setDashboardTab('settings') },
               ] as const).map(({ id, icon, label, onClick, badge }: any) => {
                 const active = dashboardTab === id;
                 return (
@@ -802,7 +918,7 @@ const App: React.FC = () => {
                     onClick={onClick}
                     style={{
                       display: 'flex', alignItems: 'center', gap: '0.4rem',
-                      padding: '0.75rem 1.25rem',
+                      padding: isMobile ? '0.55rem 0.75rem' : '0.75rem 1.25rem',
                       background: 'none', border: 'none', cursor: 'pointer',
                       borderBottom: `2px solid ${active ? 'var(--gold)' : 'transparent'}`,
                       marginBottom: '-1px',
@@ -810,6 +926,7 @@ const App: React.FC = () => {
                       fontFamily: "'Barlow Condensed', sans-serif",
                       fontWeight: 700, fontSize: '0.75rem', letterSpacing: '0.14em',
                       textTransform: 'uppercase', transition: 'color 0.2s, border-color 0.2s',
+                      flexShrink: 0, whiteSpace: 'nowrap',
                     }}
                     onMouseEnter={e => { if (!active) e.currentTarget.style.color = 'var(--text-secondary)'; }}
                     onMouseLeave={e => { if (!active) e.currentTarget.style.color = 'var(--text-muted)'; }}
@@ -818,6 +935,7 @@ const App: React.FC = () => {
                   </button>
                 );
               })}
+            </div>
             </div>
 
             {/* Current Roster Tab */}
@@ -883,7 +1001,7 @@ const App: React.FC = () => {
 
                   {/* Loading skeleton */}
                   {rosterLoading && currentRosters.length === 0 && (
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '1rem' }}>
+                    <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(auto-fill, minmax(300px, 1fr))', gap: '1rem' }}>
                       {[...Array(6)].map((_, i) => (
                         <div key={i} style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: '10px', padding: '1.5rem', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
                           <div style={{ height: '1.1rem', width: '55%', background: 'rgba(255,255,255,0.06)', borderRadius: '4px' }} />
@@ -897,7 +1015,7 @@ const App: React.FC = () => {
 
                   {/* Roster grid */}
                   {currentRosters.length > 0 && (
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(310px, 1fr))', gap: '1rem', alignItems: 'start' }}>
+                    <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(auto-fill, minmax(310px, 1fr))', gap: '1rem', alignItems: 'start' }}>
                       {[...currentRosters].sort((a, b) => {
                         const aIsMe = currentUserGuid && a.managerId === currentUserGuid ? -1 : 0;
                         const bIsMe = currentUserGuid && b.managerId === currentUserGuid ? -1 : 0;
@@ -959,8 +1077,8 @@ const App: React.FC = () => {
                                     gap: '0.5rem',
                                     padding: '0.45rem 1.25rem',
                                     opacity: player.isOnIR ? 0.55 : 1,
-                                    background: isKeeperIneligible ? 'rgba(224,82,82,0.08)' : undefined,
-                                    borderLeft: isKeeperIneligible ? '2px solid rgba(224,82,82,0.4)' : '2px solid transparent',
+                                    background: isKeeperIneligible && selectedLeague?.isKeeperLeague !== false ? 'rgba(224,82,82,0.08)' : undefined,
+                                    borderLeft: isKeeperIneligible && selectedLeague?.isKeeperLeague !== false ? '2px solid rgba(224,82,82,0.4)' : '2px solid transparent',
                                   }}>
                                     {/* Position badge */}
                                     <div style={{
@@ -1030,7 +1148,25 @@ const App: React.FC = () => {
                     <p style={{ color: 'var(--text-secondary)', fontSize: '0.8rem', margin: '0.2rem 0 0', fontFamily: "'Outfit', sans-serif" }}>All-time draft results — expand a year to view the grid</p>
                   </div>
                 </div>
-                <DraftResults draftSeasons={draftData} loading={draftLoading} />
+                <DraftResults
+                  draftSeasons={draftData}
+                  loading={draftLoading}
+                  isKeeperLeague={selectedLeague?.isKeeperLeague !== false}
+                  maxKeepers={selectedLeague?.maxKeepers}
+                  maxYearsKept={selectedLeague?.maxYearsKept}
+                  playerYearsKept={(() => {
+                    const map: Record<string, number> = {};
+                    for (const m of keeperSummary?.managers ?? []) {
+                      for (const k of m.keepers) {
+                        if (k.playerKey) {
+                          const pid = k.playerKey.match(/\.p\.(\d+)$/)?.[1] ?? k.playerKey;
+                          map[pid] = k.consecutiveYears;
+                        }
+                      }
+                    }
+                    return map;
+                  })()}
+                />
               </div>
             )}
 
@@ -1050,7 +1186,7 @@ const App: React.FC = () => {
                     </p>
                   </div>
                 </div>
-                <KeeperBoard summary={keeperSummary} loading={keeperLoading} leagueKey={selectedLeague?.id || ''} onRefresh={handleLoadKeepers} />
+                <KeeperBoard summary={keeperSummary} loading={keeperLoading} leagueKey={selectedLeague?.id || ''} onRefresh={handleLoadKeepers} maxKeepers={selectedLeague?.maxKeepers} maxYearsKept={selectedLeague?.maxYearsKept} />
               </div>
             )}
 
@@ -1065,6 +1201,7 @@ const App: React.FC = () => {
                   onRefreshTendency={handleRefreshTendency}
                   refreshingManagers={refreshingManagers}
                   tab="ownership"
+                  myManagerName={myManagerName}
                 />
               </div>
             )}
@@ -1080,6 +1217,7 @@ const App: React.FC = () => {
                   onRefreshTendency={handleRefreshTendency}
                   refreshingManagers={refreshingManagers}
                   tab="tendencies"
+                  myManagerName={myManagerName}
                 />
               </div>
             )}
@@ -1100,9 +1238,136 @@ const App: React.FC = () => {
                     </p>
                   </div>
                 </div>
-                <OwnerPositionGrid draftSeasons={draftData} loading={draftLoading} />
+                <OwnerPositionGrid draftSeasons={draftData} loading={draftLoading} myManagerName={myManagerName} />
               </div>
             )}
+
+            {dashboardTab === 'settings' && selectedLeague && (() => {
+              const saveLeagueSetting = async (patch: { isKeeperLeague?: boolean; maxKeepers?: number | null; maxYearsKept?: number | null }) => {
+                await fetch(`/api/league-settings/${encodeURIComponent(selectedLeague.id)}`, {
+                  method: 'POST', headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify(patch),
+                });
+                const updated = { ...selectedLeague, ...patch };
+                setSelectedLeague(updated);
+                setLeagues((prev: League[]) => prev.map((l: League) => l.id === selectedLeague.id ? { ...l, ...patch } : l));
+              };
+
+              return (
+                <div className="pt-2" style={{ maxWidth: '480px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', marginBottom: '2rem' }}>
+                    <div style={{ padding: '0.75rem', background: 'var(--gold-dim)', border: '1px solid rgba(212,160,23,0.2)', borderRadius: '8px' }}>
+                      <Settings style={{ color: 'var(--gold)' }} size={22} />
+                    </div>
+                    <div>
+                      <h2 style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: '1.6rem', letterSpacing: '0.08em', color: 'var(--text-primary)', margin: 0, textTransform: 'uppercase' }}>
+                        League Settings
+                      </h2>
+                      <p style={{ color: 'var(--text-secondary)', fontSize: '0.8rem', margin: '0.2rem 0 0', fontFamily: "'Outfit', sans-serif" }}>
+                        {selectedLeague.name}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '1px', border: '1px solid var(--border)', borderRadius: '10px', overflow: 'hidden' }}>
+                    {/* Keeper league toggle */}
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '1.1rem 1.25rem', background: 'var(--surface)' }}>
+                      <div>
+                        <div style={{ fontFamily: "'Outfit', sans-serif", fontWeight: 600, fontSize: '0.9rem', color: 'var(--text-primary)' }}>Keeper League</div>
+                        <div style={{ fontFamily: "'Outfit', sans-serif", fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '0.15rem' }}>
+                          Enables keeper features — designations, cost tracking, and the Keepers tab
+                        </div>
+                      </div>
+                      <button
+                        onClick={() => saveLeagueSetting({ isKeeperLeague: !selectedLeague.isKeeperLeague })}
+                        style={{
+                          flexShrink: 0, marginLeft: '1.5rem',
+                          width: '44px', height: '24px', borderRadius: '12px',
+                          background: selectedLeague.isKeeperLeague ? 'var(--gold)' : 'rgba(255,255,255,0.1)',
+                          border: 'none', cursor: 'pointer', position: 'relative', transition: 'background 0.2s',
+                        }}
+                      >
+                        <span style={{
+                          position: 'absolute', top: '3px',
+                          left: selectedLeague.isKeeperLeague ? '23px' : '3px',
+                          width: '18px', height: '18px', borderRadius: '50%',
+                          background: selectedLeague.isKeeperLeague ? '#0C0F16' : 'var(--text-muted)',
+                          transition: 'left 0.2s',
+                        }} />
+                      </button>
+                    </div>
+
+                    {/* Max keepers — only shown when keeper league */}
+                    {selectedLeague.isKeeperLeague && (
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '1.1rem 1.25rem', background: 'var(--surface)', borderTop: '1px solid var(--border)' }}>
+                        <div>
+                          <div style={{ fontFamily: "'Outfit', sans-serif", fontWeight: 600, fontSize: '0.9rem', color: 'var(--text-primary)' }}>Max Keepers Per Team</div>
+                          <div style={{ fontFamily: "'Outfit', sans-serif", fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '0.15rem' }}>
+                            How many players each team can keep. Leave blank for no limit.
+                          </div>
+                        </div>
+                        <input
+                          type="number"
+                          min={1}
+                          max={30}
+                          placeholder="—"
+                          defaultValue={selectedLeague.maxKeepers ?? ''}
+                          onBlur={(e: React.FocusEvent<HTMLInputElement>) => {
+                            const raw = e.target.value.trim();
+                            const val = raw === '' ? null : parseInt(raw, 10);
+                            if (val !== (selectedLeague.maxKeepers ?? null)) {
+                              saveLeagueSetting({ maxKeepers: val });
+                            }
+                          }}
+                          style={{
+                            flexShrink: 0, marginLeft: '1.5rem',
+                            width: '60px', textAlign: 'center',
+                            padding: '0.35rem 0.5rem', borderRadius: '6px',
+                            background: 'var(--surface-2)', border: '1px solid var(--border)',
+                            color: 'var(--text-primary)', fontFamily: "'Outfit', sans-serif",
+                            fontSize: '0.9rem', fontWeight: 600,
+                          }}
+                        />
+                      </div>
+                    )}
+
+                    {/* Max years kept — only shown when keeper league */}
+                    {selectedLeague.isKeeperLeague && (
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '1.1rem 1.25rem', background: 'var(--surface)', borderTop: '1px solid var(--border)' }}>
+                        <div>
+                          <div style={{ fontFamily: "'Outfit', sans-serif", fontWeight: 600, fontSize: '0.9rem', color: 'var(--text-primary)' }}>Max Years Kept</div>
+                          <div style={{ fontFamily: "'Outfit', sans-serif", fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '0.15rem' }}>
+                            Max consecutive years a player can be kept. Leave blank for no limit.
+                          </div>
+                        </div>
+                        <input
+                          type="number"
+                          min={1}
+                          max={20}
+                          placeholder="—"
+                          defaultValue={selectedLeague.maxYearsKept ?? ''}
+                          onBlur={(e: React.FocusEvent<HTMLInputElement>) => {
+                            const raw = e.target.value.trim();
+                            const val = raw === '' ? null : parseInt(raw, 10);
+                            if (val !== (selectedLeague.maxYearsKept ?? null)) {
+                              saveLeagueSetting({ maxYearsKept: val });
+                            }
+                          }}
+                          style={{
+                            flexShrink: 0, marginLeft: '1.5rem',
+                            width: '60px', textAlign: 'center',
+                            padding: '0.35rem 0.5rem', borderRadius: '6px',
+                            background: 'var(--surface-2)', border: '1px solid var(--border)',
+                            color: 'var(--text-primary)', fontFamily: "'Outfit', sans-serif",
+                            fontSize: '0.9rem', fontWeight: 600,
+                          }}
+                        />
+                      </div>
+                    )}
+                  </div>
+                </div>
+              );
+            })()}
           </div>
         );
 
@@ -1161,7 +1426,10 @@ const App: React.FC = () => {
             onMouseEnter={e => (e.currentTarget.style.opacity = '1')}
             onMouseLeave={e => (e.currentTarget.style.opacity = '0.9')}
           >
-            <DynastyAlchemyLogo size={44} withText />
+            <div style={{ display: 'flex', flexDirection: 'column', lineHeight: 1 }}>
+                <span style={{ fontFamily: "'Cinzel', serif", fontWeight: 900, letterSpacing: '0.04em', fontSize: '1.1rem', color: 'var(--text-primary)' }}>DYNASTY</span>
+                <span style={{ fontFamily: "'Cinzel', serif", fontWeight: 700, letterSpacing: '0.18em', fontSize: '0.875rem', color: 'var(--gold)' }}>ALCHEMY</span>
+              </div>
           </div>
 
           {currentStep !== AppState.LOGIN && (
@@ -1194,9 +1462,6 @@ const App: React.FC = () => {
             zIndex: 100,
             display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
           }}>
-            <div style={{ marginBottom: '1.5rem', filter: 'drop-shadow(0 0 40px rgba(212,160,23,0.3))' }}>
-              <DynastyAlchemyLogo size={80} />
-            </div>
             <p style={{
               fontFamily: "'Cinzel', serif", fontWeight: 700,
               fontSize: '1.25rem', letterSpacing: '0.06em',
@@ -1222,8 +1487,7 @@ const App: React.FC = () => {
           <div style={{ display: 'flex', gap: '2.5rem' }}>
             {[
               { label: 'Yahoo API', href: 'https://developer.yahoo.com/fantasysports/guide/' },
-              { label: 'Security', href: '#' },
-              { label: 'Privacy', href: '#' },
+              { label: 'Bugs', href: 'https://github.com/dwyers2/GridironLegacy/issues' },
             ].map(({ label, href }) => (
               <a
                 key={label}

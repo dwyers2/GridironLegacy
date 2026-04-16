@@ -391,6 +391,7 @@ app.post('/api/manager-tendencies', async (req, res) => {
     return res.status(400).json({ error: 'Invalid request - managers array required' });
   }
 
+  const { skipAI } = req.body;
   const targetSet: Set<string> | null = targetManagerIds ? new Set<string>(targetManagerIds) : null;
 
   console.log('\n📊 Generating manager tendency analysis...');
@@ -453,6 +454,12 @@ app.post('/api/manager-tendencies', async (req, res) => {
     topPlayers: topPlayers.slice(0, 5), // Include top 5 players in response
     fromAI: false
   }));
+
+  // If caller only wants data-driven stats, return immediately
+  if (skipAI) {
+    res.json({ tendencies });
+    return;
+  }
 
   // Try to enhance with AI summaries (optional)
   try {
@@ -563,6 +570,108 @@ Focus on their player preferences and draft tendencies. Only mention loyalty if 
   res.json({ tendencies });
 });
 
+// Single-manager AI enhancement (called per-manager from frontend for progressive loading)
+app.post('/api/manager-tendencies/single', async (req, res) => {
+  const { manager, leagueContext } = req.body;
+  if (!manager) return res.status(400).json({ error: 'manager required' });
+
+  const { minLoyalty, maxLoyalty, avgLoyalty, loyaltyRank, totalManagers, loyaltyDescription } = leagueContext || {};
+
+  const players = manager.players || [];
+  const topPlayers = [...players].sort((a: any, b: any) => (b.timesOwned || 0) - (a.timesOwned || 0)).slice(0, 5);
+  const positionCounts: { [k: string]: number } = {};
+  players.forEach((p: any) => { positionCounts[p.position || 'Unknown'] = (positionCounts[p.position || 'Unknown'] || 0) + (p.timesOwned || 1); });
+  const topPositions = Object.entries(positionCounts).sort(([,a],[,b]) => (b as number)-(a as number)).slice(0,3).map(([pos]) => pos);
+
+  const prompt = `You are a fantasy football analyst. Write 2-3 punchy sentences about this manager's tendencies:
+
+Manager: ${manager.managerName}
+Top players owned: ${topPlayers.map((p: any) => `${p.playerName} (${p.position}, owned ${p.timesOwned}x)`).join(', ')}
+Position preference: ${topPositions.join(', ')}
+Loyalty score: ${manager.loyaltyScore}%${loyaltyDescription ? ` (${loyaltyDescription} in this league)` : ''}
+${leagueContext ? `League context: Loyalty scores range from ${minLoyalty}% to ${maxLoyalty}%, league average is ${avgLoyalty}%. This manager ranks #${loyaltyRank} of ${totalManagers}.` : ''}
+
+Focus on their player preferences and draft tendencies. Only mention loyalty if it's notably high or low relative to the league. Keep it analytical but entertaining. Return ONLY the analysis text, no JSON.`;
+
+  let analysis = manager.analysis; // fallback to data-driven
+  try {
+    const { GoogleGenAI } = await import('@google/genai');
+    const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY! });
+    const result = await callGeminiWithRetry(() => ai.models.generateContent({ model: 'gemini-2.5-flash', contents: prompt }));
+    const text = result.text || result.candidates?.[0]?.content?.parts?.[0]?.text;
+    if (text) analysis = text.trim();
+  } catch {
+    const deepSeekResult = await callDeepSeek(prompt);
+    if (deepSeekResult) analysis = deepSeekResult.trim();
+  }
+
+  res.json({ tendency: { ...manager, analysis, topPositions, fromAI: analysis !== manager.analysis } });
+});
+
+// Fetch and cache season fantasy points for all players in a league/season draft
+app.post('/api/draft-stats/:leagueKey/:season', async (req, res) => {
+  const { leagueKey, season } = req.params;
+  const authHeader = req.headers.authorization;
+  if (!authHeader) return res.status(401).json({ error: 'No Authorization header' });
+
+  // Check DB cache first — if any points are already stored, return them
+  const cachedRows = db.db.prepare(
+    `SELECT player_key, season_points FROM draft_picks WHERE league_key = ? AND season = ? AND player_key != '' AND season_points IS NOT NULL`
+  ).all(leagueKey, season) as Array<{ player_key: string; season_points: number }>;
+
+  if (cachedRows.length > 0) {
+    const cachedPoints: Record<string, number> = {};
+    for (const r of cachedRows) cachedPoints[r.player_key] = r.season_points;
+    console.log(`💾 Returning ${cachedRows.length} cached season points for ${leagueKey}/${season}`);
+    return res.json({ points: cachedPoints });
+  }
+
+  // Get all player keys stored for this league/season
+  const rows = db.db.prepare(
+    `SELECT player_key FROM draft_picks WHERE league_key = ? AND season = ? AND player_key != ''`
+  ).all(leagueKey, season) as Array<{ player_key: string }>;
+
+  if (rows.length === 0) return res.json({ points: {} });
+
+  const playerKeys = rows.map(r => r.player_key);
+  const BATCH = 25;
+  const points: Record<string, number> = {};
+
+  for (let i = 0; i < playerKeys.length; i += BATCH) {
+    const batch = playerKeys.slice(i, i + BATCH).join(',');
+    const url = `https://fantasysports.yahooapis.com/fantasy/v2/league/${leagueKey}/players;player_keys=${batch};out=stats?format=json`;
+    try {
+      const response = await axios.get(url, {
+        headers: { Authorization: authHeader, Accept: 'application/json', 'User-Agent': 'Mozilla/5.0' },
+        timeout: 15000,
+      });
+      const leagueArr = response.data?.fantasy_content?.league;
+      const playersObj = Array.isArray(leagueArr) ? leagueArr[1]?.players : null;
+      if (!playersObj) continue;
+      const count = playersObj.count || 0;
+      for (let j = 0; j < count; j++) {
+        const playerArr = playersObj[j]?.player;
+        if (!Array.isArray(playerArr)) continue;
+        const meta = playerArr[0];
+        const statsBlock = playerArr[1];
+        // player key is in meta array
+        const playerKey = Array.isArray(meta) ? meta.find((m: any) => m?.player_key)?.player_key : meta?.player_key;
+        const total = statsBlock?.player_points?.total ?? statsBlock?.player_stats?.total;
+        if (playerKey && total !== undefined) {
+          points[playerKey] = parseFloat(total) || 0;
+        }
+      }
+    } catch (err: any) {
+      console.warn(`⚠️ Stats batch ${i}-${i + BATCH} failed:`, err.message);
+    }
+  }
+
+  // Persist to DB
+  db.updateDraftPickPoints(leagueKey, season, points);
+  console.log(`✅ Stored season points for ${Object.keys(points).length} players in ${leagueKey}/${season}`);
+  res.json({ points });
+});
+
 // 🗄️ Cache Management Endpoints
 
 // Cache season roster data
@@ -579,12 +688,20 @@ app.post('/api/cache/season', (req, res) => {
   }
 });
 
-// Get all cached aggregated data
+// Get cached aggregated data, optionally scoped to a comma-separated list of leagueKeys
 app.get('/api/cache/aggregated', (req, res) => {
   try {
-    const data = cacheService.getCachedAggregatedData();
-    const cachedSeasons = db.getCachedSeasons();
-    console.log(`📋 GET aggregated: managers=${data.length} cachedSeasons=[${cachedSeasons.join(',')}]`);
+    const leagueKeysParam = req.query.leagueKeys as string | undefined;
+    const leagueKeys = leagueKeysParam ? leagueKeysParam.split(',').filter(Boolean) : [];
+
+    const data = leagueKeys.length > 0
+      ? cacheService.getCachedAggregatedDataForLeagues(leagueKeys)
+      : cacheService.getCachedAggregatedData();
+    const cachedSeasons = leagueKeys.length > 0
+      ? db.getCachedSeasonsByLeagueKeys(leagueKeys)
+      : db.getCachedSeasons();
+
+    console.log(`📋 GET aggregated: managers=${data.length} cachedSeasons=[${cachedSeasons.join(',')}]${leagueKeys.length ? ` (scoped to ${leagueKeys.length} leagues)` : ''}`);
     res.json({
       managers: data,
       count: data.length,
@@ -975,6 +1092,49 @@ app.get('/api/cache/draft/chain/:leagueKey', (req, res) => {
   }
 });
 
+// Clear cached draft data for a league (and its full historical chain)
+app.delete('/api/cache/draft/:leagueKey', (req, res) => {
+  try {
+    const { leagueKey } = req.params;
+    const result = db.clearDraftCacheForChain(leagueKey);
+    console.log(`🗑️ Cleared draft cache for chain containing ${leagueKey}: ${result.deletedPicks} picks, leagues: ${result.leaguesCleared.join(', ')}`);
+    res.json({ success: true, ...result });
+  } catch (err: any) {
+    console.error('❌ Failed to clear draft cache:', err);
+    res.status(500).json({ error: 'Failed to clear draft cache', message: err.message });
+  }
+});
+
+// Get/set league settings (keeper flag + max keepers)
+app.get('/api/league-settings/:leagueKey', (req, res) => {
+  const { leagueKey } = req.params;
+  res.json({
+    isKeeperLeague: db.getIsKeeperLeague(leagueKey),
+    maxKeepers: db.getMaxKeepers(leagueKey),
+    maxYearsKept: db.getMaxYearsKept(leagueKey),
+  });
+});
+
+app.post('/api/league-settings/:leagueKey', (req, res) => {
+  const { leagueKey } = req.params;
+  const { isKeeperLeague, maxKeepers, maxYearsKept } = req.body;
+  if (isKeeperLeague !== undefined) {
+    if (typeof isKeeperLeague !== 'boolean') return res.status(400).json({ error: 'isKeeperLeague must be boolean' });
+    db.setIsKeeperLeague(leagueKey, isKeeperLeague);
+  }
+  if (maxKeepers !== undefined) {
+    const val = maxKeepers === null ? null : Number(maxKeepers);
+    if (maxKeepers !== null && (isNaN(val as number) || (val as number) < 0)) return res.status(400).json({ error: 'maxKeepers must be a non-negative number or null' });
+    db.setMaxKeepers(leagueKey, val);
+  }
+  if (maxYearsKept !== undefined) {
+    const val = maxYearsKept === null ? null : Number(maxYearsKept);
+    if (maxYearsKept !== null && (isNaN(val as number) || (val as number) < 1)) return res.status(400).json({ error: 'maxYearsKept must be a positive number or null' });
+    db.setMaxYearsKept(leagueKey, val);
+  }
+  res.json({ success: true });
+});
+
 // Get cached draft results for a league
 app.get('/api/cache/draft/:leagueKey', (req, res) => {
   try {
@@ -1046,7 +1206,7 @@ app.get('/api/keepers/summary/:leagueKey', (req, res) => {
         position: k.position,
         nflTeam: k.nfl_team,
         roundDrafted: k.round,
-        keeperCost: k.round + 1,
+        keeperCost: k.round - 1,
         consecutiveYears: getConsecutiveYears(k.player_key),
         isManual: false,
       });
@@ -1065,6 +1225,19 @@ app.get('/api/keepers/summary/:leagueKey', (req, res) => {
           consecutiveYears: mk.player_key ? getConsecutiveYears(mk.player_key) : 0,
           isManual: true,
         });
+      }
+    }
+
+    // Resolve keeper cost conflicts: if two keepers would cost the same round,
+    // bump one to roundDrafted - 2 (one round earlier than the conflict round)
+    for (const m of Object.values(managerMap)) {
+      const usedCosts = new Set<number>();
+      for (const keeper of m.keepers as any[]) {
+        if (keeper.isManual || keeper.keeperCost <= 0) continue;
+        if (usedCosts.has(keeper.keeperCost)) {
+          keeper.keeperCost = keeper.roundDrafted - 2;
+        }
+        usedCosts.add(keeper.keeperCost);
       }
     }
 

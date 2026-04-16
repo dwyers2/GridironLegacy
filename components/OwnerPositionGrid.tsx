@@ -1,10 +1,12 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { SeasonDraftData } from '../types';
 import { Loader2, Target } from 'lucide-react';
+import { useIsMobile } from '../hooks/useIsMobile';
 
 interface Props {
   draftSeasons: SeasonDraftData[];
   loading: boolean;
+  myManagerName?: string | null;
 }
 
 const POSITION_COLORS: Record<string, string> = {
@@ -29,7 +31,10 @@ interface Entry {
   playerName: string;
 }
 
-export default function OwnerPositionGrid({ draftSeasons, loading }: Props) {
+export default function OwnerPositionGrid({ draftSeasons, loading, myManagerName }: Props) {
+  const isMobile = useIsMobile();
+  const [selectedManagerName, setSelectedManagerName] = useState<string | null>(null);
+
   if (loading && draftSeasons.length === 0) {
     return (
       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '6rem 2rem', gap: '1rem' }}>
@@ -74,7 +79,15 @@ export default function OwnerPositionGrid({ draftSeasons, loading }: Props) {
   const seenNames = new Set<string>();
   const recentManagers: Array<{ teamKey: string; managerName: string; draftSlot: number }> = [];
 
-  for (const t of [...mostRecent.teams].sort((a, b) => a.draftSlot - b.draftSlot)) {
+  const sortedTeams = [...mostRecent.teams].sort((a, b) => {
+    if (myManagerName) {
+      const aIsMe = a.managerName === myManagerName ? -1 : 0;
+      const bIsMe = b.managerName === myManagerName ? -1 : 0;
+      if (aIsMe !== bIsMe) return aIsMe - bIsMe;
+    }
+    return a.draftSlot - b.draftSlot;
+  });
+  for (const t of sortedTeams) {
     // Track every teamKey associated with this name across the most recent season
     const keys = nameToTeamKeys.get(t.managerName) ?? [];
     keys.push(t.teamKey);
@@ -114,6 +127,92 @@ export default function OwnerPositionGrid({ draftSeasons, loading }: Props) {
   }
 
   const allSeasons = sorted.map(s => s.season);
+
+  if (isMobile) {
+    const displayManager = selectedManagerName
+      ? recentManagers.find(m => m.managerName === selectedManagerName) ?? recentManagers[0]
+      : recentManagers[0];
+    return (
+      <div>
+        {/* Manager pill picker */}
+        <div className="pill-scroll" style={{ marginBottom: '1rem' }}>
+          {recentManagers.map(m => (
+            <button
+              key={m.teamKey}
+              onClick={() => setSelectedManagerName(m.managerName)}
+              style={{
+                padding: '0.45rem 0.875rem',
+                borderRadius: '20px',
+                background: displayManager?.managerName === m.managerName ? 'var(--gold)' : 'rgba(255,255,255,0.04)',
+                color: displayManager?.managerName === m.managerName ? '#0C0F16' : 'var(--text-secondary)',
+                border: displayManager?.managerName === m.managerName ? '1px solid var(--gold)' : '1px solid var(--border-muted)',
+                fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700,
+                fontSize: '0.8rem', letterSpacing: '0.06em',
+                cursor: 'pointer', transition: 'all 0.15s', flexShrink: 0, whiteSpace: 'nowrap',
+              }}
+            >
+              {m.managerName}
+            </button>
+          ))}
+        </div>
+
+        {/* Position legend */}
+        <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', alignItems: 'center', marginBottom: '0.875rem' }}>
+          {POSITION_ORDER.map(pos => (
+            <div key={pos} style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+              <div style={{ width: '10px', height: '10px', borderRadius: '50%', background: dotColor(pos), boxShadow: `0 0 6px ${dotColor(pos)}80`, flexShrink: 0 }} />
+              <span style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: '0.7rem', color: 'var(--text-secondary)' }}>{pos}</span>
+            </div>
+          ))}
+        </div>
+
+        <p style={{ fontFamily: "'Outfit', sans-serif", fontSize: '0.72rem', color: 'var(--text-muted)', margin: '0 0 1rem', fontStyle: 'italic' }}>
+          Each dot = one draft pick · hover for details
+        </p>
+
+        {/* Single-manager dot grid */}
+        {displayManager && (
+          <div style={{ overflowX: 'auto', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: '8px' }}>
+            <table style={{ borderCollapse: 'collapse', width: '100%' }}>
+              <thead>
+                <tr>
+                  <th style={{ padding: '0.75rem 1rem', fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: '0.6rem', letterSpacing: '0.18em', textTransform: 'uppercase', color: 'var(--text-muted)', textAlign: 'left', borderBottom: '1px solid var(--border)', background: 'var(--surface)', minWidth: '72px' }}>Round</th>
+                  <th style={{ padding: '0.75rem 1rem', fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: '0.7rem', letterSpacing: '0.06em', color: 'var(--gold)', borderBottom: '1px solid var(--border)', borderLeft: '1px solid rgba(212,160,23,0.07)', background: 'var(--surface)', textAlign: 'center' }}>
+                    {displayManager.managerName}
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {Array.from({ length: MAX_ROUNDS }, (_, i) => i + 1).map(round => {
+                  const entries = grid.get(displayManager.managerName)?.get(round) ?? [];
+                  return (
+                    <tr key={round}>
+                      <td style={{ padding: '0.55rem 1rem', fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: '0.75rem', letterSpacing: '0.1em', color: 'var(--text-muted)', borderBottom: '1px solid rgba(212,160,23,0.05)', background: 'var(--surface-2)' }}>
+                        {round}
+                      </td>
+                      <td style={{ padding: '0.45rem 0.75rem', borderBottom: '1px solid rgba(212,160,23,0.04)', borderLeft: '1px solid rgba(212,160,23,0.05)', verticalAlign: 'middle' }}>
+                        <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap', justifyContent: 'center', alignItems: 'center', minHeight: '18px' }}>
+                          {entries.length > 0 ? entries.map((entry, idx) => (
+                            <div
+                              key={idx}
+                              title={`${entry.season}: ${entry.playerName} (${entry.position})`}
+                              style={{ width: '12px', height: '12px', borderRadius: '50%', background: dotColor(entry.position), boxShadow: `0 0 5px ${dotColor(entry.position)}55`, flexShrink: 0, cursor: 'help' }}
+                            />
+                          )) : (
+                            <span style={{ color: 'var(--text-muted)', fontSize: '0.6rem', opacity: 0.3 }}>—</span>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    );
+  }
 
   return (
     <div>

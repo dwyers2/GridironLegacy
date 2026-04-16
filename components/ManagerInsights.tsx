@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { ManagerOwnershipData, ManagerTendency, FetchProgress } from '../types';
 import { Users, Trophy, TrendingUp, Sparkles, Heart, Filter, RefreshCw } from 'lucide-react';
+import { useIsMobile } from '../hooks/useIsMobile';
 
 interface ManagerInsightsProps {
   ownershipData: ManagerOwnershipData[];
@@ -11,6 +12,7 @@ interface ManagerInsightsProps {
   refreshingManagers?: Set<string>;
   loadingManagerIds?: Set<string>;
   tab?: 'ownership' | 'tendencies';
+  myManagerName?: string | null;
 }
 
 const POSITION_STYLES: Record<string, React.CSSProperties> = {
@@ -35,9 +37,17 @@ const ManagerInsights: React.FC<ManagerInsightsProps> = ({
   refreshingManagers,
   loadingManagerIds,
   tab,
+  myManagerName,
 }) => {
+  const sortedOwnership = myManagerName
+    ? [...ownershipData].sort((a, b) => (b.managerName === myManagerName ? 1 : 0) - (a.managerName === myManagerName ? 1 : 0))
+    : ownershipData;
+  const sortedTendencies = myManagerName
+    ? [...tendencies].sort((a, b) => (b.managerName === myManagerName ? 1 : 0) - (a.managerName === myManagerName ? 1 : 0))
+    : tendencies;
   const [activeTab, setActiveTab] = useState<'ownership' | 'tendencies'>('ownership');
   const [ownershipFilter, setOwnershipFilter] = useState(3);
+  const isMobile = useIsMobile();
 
   if (loading) {
     return (
@@ -83,7 +93,7 @@ const ManagerInsights: React.FC<ManagerInsightsProps> = ({
     );
   }
 
-  const totalSeasons = new Set(ownershipData.flatMap(m => m.seasonsTracked || [])).size;
+  const totalSeasons = new Set(sortedOwnership.flatMap(m => m.seasonsTracked || [])).size;
 
   const ownershipContent = (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
@@ -129,7 +139,7 @@ const ManagerInsights: React.FC<ManagerInsightsProps> = ({
       </div>
 
       {/* Manager Cards */}
-      {ownershipData.map((manager) => {
+      {sortedOwnership.map((manager) => {
         const filteredPlayers = manager.players.filter(p => p.timesOwned >= ownershipFilter);
         if (filteredPlayers.length === 0) return null;
 
@@ -196,101 +206,148 @@ const ManagerInsights: React.FC<ManagerInsightsProps> = ({
               </div>
             </div>
 
-            {/* Table */}
-            <div style={{ overflowX: 'auto' }}>
-              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                <thead>
-                  <tr style={{ background: 'var(--surface-2)' }}>
-                    {['Rank', 'Player', 'Position', 'Team', 'Times Owned', 'Seasons'].map((h, i) => (
-                      <th key={h} style={{
-                        padding: '0.75rem 1.25rem',
-                        fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700,
-                        fontSize: '0.6rem', letterSpacing: '0.18em', textTransform: 'uppercase',
-                        color: 'var(--text-muted)',
-                        textAlign: i === 0 || i === 1 || i === 5 ? 'left' : 'center',
-                        borderBottom: '1px solid var(--border)',
-                        whiteSpace: 'nowrap',
-                      }}>{h}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {filteredPlayers
-                    .sort((a, b) => b.timesOwned - a.timesOwned)
-                    .map((player, index) => (
-                      <tr
-                        key={player.playerId}
-                        style={{ borderBottom: '1px solid rgba(212,160,23,0.05)', transition: 'background 0.15s' }}
-                        onMouseEnter={e => (e.currentTarget.style.background = 'rgba(212,160,23,0.04)')}
-                        onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
-                      >
-                        <td style={{ padding: '0.875rem 1.25rem' }}>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-                            {index < 3 && (
-                              <Trophy
-                                size={13}
-                                style={{ color: index === 0 ? '#FBBF24' : index === 1 ? '#94A3B8' : '#CD7F32' }}
-                              />
-                            )}
-                            <span style={{
-                              fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700,
-                              fontSize: '0.8rem', letterSpacing: '0.06em', color: 'var(--text-muted)',
-                            }}>#{index + 1}</span>
-                          </div>
-                        </td>
-                        <td style={{ padding: '0.875rem 1.25rem' }}>
-                          <div style={{
-                            fontFamily: "'Outfit', sans-serif", fontWeight: 600,
-                            color: 'var(--text-primary)', fontSize: '0.875rem',
-                          }}>
-                            {player.playerName}
-                          </div>
-                        </td>
-                        <td style={{ padding: '0.875rem 1.25rem', textAlign: 'center' }}>
-                          <span style={{
-                            display: 'inline-block', padding: '0.2rem 0.6rem',
-                            borderRadius: '4px', fontSize: '0.7rem', fontWeight: 700,
-                            fontFamily: "'Barlow Condensed', sans-serif", letterSpacing: '0.06em',
-                            ...positionStyle(player.position),
-                          }}>
+            {/* Table — desktop / card list — mobile */}
+            {isMobile ? (
+              <div style={{ display: 'flex', flexDirection: 'column' }}>
+                {filteredPlayers
+                  .sort((a, b) => b.timesOwned - a.timesOwned)
+                  .map((player, index) => (
+                    <div key={player.playerId} style={{
+                      display: 'flex', alignItems: 'center', gap: '0.75rem',
+                      padding: '0.75rem 1rem',
+                      borderBottom: '1px solid rgba(212,160,23,0.05)',
+                    }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', minWidth: '34px' }}>
+                        {index < 3 && <Trophy size={12} style={{ color: index === 0 ? '#FBBF24' : index === 1 ? '#94A3B8' : '#CD7F32' }} />}
+                        <span style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                          #{index + 1}
+                        </span>
+                      </div>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontFamily: "'Outfit', sans-serif", fontWeight: 600, color: 'var(--text-primary)', fontSize: '0.85rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          {player.playerName}
+                        </div>
+                        <div style={{ display: 'flex', gap: '0.3rem', marginTop: '0.2rem', alignItems: 'center' }}>
+                          <span style={{ fontSize: '0.6rem', fontWeight: 700, padding: '0.1rem 0.35rem', borderRadius: '3px', fontFamily: "'Barlow Condensed', sans-serif", letterSpacing: '0.06em', ...positionStyle(player.position) }}>
                             {player.position}
                           </span>
-                        </td>
-                        <td style={{ padding: '0.875rem 1.25rem', textAlign: 'center' }}>
-                          <span style={{ fontFamily: 'monospace', fontSize: '0.8rem', color: 'var(--text-secondary)', fontWeight: 600 }}>
-                            {player.team}
+                          {player.team && <span style={{ fontFamily: 'monospace', fontSize: '0.7rem', color: 'var(--text-muted)' }}>{player.team}</span>}
+                        </div>
+                      </div>
+                      <div style={{ textAlign: 'right', flexShrink: 0 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', justifyContent: 'flex-end' }}>
+                          {player.timesOwned > 1 && <Heart size={11} style={{ color: 'var(--red)' }} />}
+                          <span style={{ fontFamily: "'Cinzel', serif", fontWeight: 900, fontSize: '1.1rem', color: 'var(--green)' }}>
+                            {player.timesOwned}
                           </span>
-                        </td>
-                        <td style={{ padding: '0.875rem 1.25rem', textAlign: 'center' }}>
-                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.4rem' }}>
-                            {player.timesOwned > 1 && <Heart size={13} style={{ color: 'var(--red)' }} />}
-                            <span style={{ fontFamily: "'Cinzel', serif", fontWeight: 900, fontSize: '1.2rem', color: 'var(--green)' }}>
-                              {player.timesOwned}
+                        </div>
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.2rem', justifyContent: 'flex-end', marginTop: '0.2rem' }}>
+                          {player.seasons.sort((a, b) => Number(b) - Number(a)).slice(0, 3).map(s => (
+                            <span key={s} style={{ padding: '0.1rem 0.3rem', background: 'var(--gold-dim)', border: '1px solid rgba(212,160,23,0.2)', borderRadius: '3px', fontSize: '0.55rem', fontWeight: 700, color: 'var(--gold)', fontFamily: "'Barlow Condensed', sans-serif" }}>
+                              {s}
                             </span>
-                          </div>
-                        </td>
-                        <td style={{ padding: '0.875rem 1.25rem' }}>
-                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.25rem' }}>
-                            {player.seasons
-                              .sort((a, b) => Number(b) - Number(a))
-                              .map((season) => (
-                                <span key={season} style={{
-                                  padding: '0.15rem 0.45rem',
-                                  background: 'var(--gold-dim)', border: '1px solid rgba(212,160,23,0.2)',
-                                  borderRadius: '3px', fontSize: '0.6rem', fontWeight: 700,
-                                  color: 'var(--gold)',
-                                  fontFamily: "'Barlow Condensed', sans-serif", letterSpacing: '0.06em',
-                                }}>
-                                  {season}
-                                </span>
-                              ))}
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
-                </tbody>
-              </table>
-            </div>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+              </div>
+            ) : (
+              <div style={{ overflowX: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                  <thead>
+                    <tr style={{ background: 'var(--surface-2)' }}>
+                      {['Rank', 'Player', 'Position', 'Team', 'Times Owned', 'Seasons'].map((h, i) => (
+                        <th key={h} style={{
+                          padding: '0.75rem 1.25rem',
+                          fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700,
+                          fontSize: '0.6rem', letterSpacing: '0.18em', textTransform: 'uppercase',
+                          color: 'var(--text-muted)',
+                          textAlign: i === 0 || i === 1 || i === 5 ? 'left' : 'center',
+                          borderBottom: '1px solid var(--border)',
+                          whiteSpace: 'nowrap',
+                        }}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filteredPlayers
+                      .sort((a, b) => b.timesOwned - a.timesOwned)
+                      .map((player, index) => (
+                        <tr
+                          key={player.playerId}
+                          style={{ borderBottom: '1px solid rgba(212,160,23,0.05)', transition: 'background 0.15s' }}
+                          onMouseEnter={e => (e.currentTarget.style.background = 'rgba(212,160,23,0.04)')}
+                          onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
+                        >
+                          <td style={{ padding: '0.875rem 1.25rem' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                              {index < 3 && (
+                                <Trophy
+                                  size={13}
+                                  style={{ color: index === 0 ? '#FBBF24' : index === 1 ? '#94A3B8' : '#CD7F32' }}
+                                />
+                              )}
+                              <span style={{
+                                fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700,
+                                fontSize: '0.8rem', letterSpacing: '0.06em', color: 'var(--text-muted)',
+                              }}>#{index + 1}</span>
+                            </div>
+                          </td>
+                          <td style={{ padding: '0.875rem 1.25rem' }}>
+                            <div style={{
+                              fontFamily: "'Outfit', sans-serif", fontWeight: 600,
+                              color: 'var(--text-primary)', fontSize: '0.875rem',
+                            }}>
+                              {player.playerName}
+                            </div>
+                          </td>
+                          <td style={{ padding: '0.875rem 1.25rem', textAlign: 'center' }}>
+                            <span style={{
+                              display: 'inline-block', padding: '0.2rem 0.6rem',
+                              borderRadius: '4px', fontSize: '0.7rem', fontWeight: 700,
+                              fontFamily: "'Barlow Condensed', sans-serif", letterSpacing: '0.06em',
+                              ...positionStyle(player.position),
+                            }}>
+                              {player.position}
+                            </span>
+                          </td>
+                          <td style={{ padding: '0.875rem 1.25rem', textAlign: 'center' }}>
+                            <span style={{ fontFamily: 'monospace', fontSize: '0.8rem', color: 'var(--text-secondary)', fontWeight: 600 }}>
+                              {player.team}
+                            </span>
+                          </td>
+                          <td style={{ padding: '0.875rem 1.25rem', textAlign: 'center' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.4rem' }}>
+                              {player.timesOwned > 1 && <Heart size={13} style={{ color: 'var(--red)' }} />}
+                              <span style={{ fontFamily: "'Cinzel', serif", fontWeight: 900, fontSize: '1.2rem', color: 'var(--green)' }}>
+                                {player.timesOwned}
+                              </span>
+                            </div>
+                          </td>
+                          <td style={{ padding: '0.875rem 1.25rem' }}>
+                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.25rem' }}>
+                              {player.seasons
+                                .sort((a, b) => Number(b) - Number(a))
+                                .map((season) => (
+                                  <span key={season} style={{
+                                    padding: '0.15rem 0.45rem',
+                                    background: 'var(--gold-dim)', border: '1px solid rgba(212,160,23,0.2)',
+                                    borderRadius: '3px', fontSize: '0.6rem', fontWeight: 700,
+                                    color: 'var(--gold)',
+                                    fontFamily: "'Barlow Condensed', sans-serif", letterSpacing: '0.06em',
+                                  }}>
+                                    {season}
+                                  </span>
+                                ))}
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
         );
       })}
@@ -313,10 +370,10 @@ const ManagerInsights: React.FC<ManagerInsightsProps> = ({
   );
 
   // Render cards for every manager in ownershipData, regardless of whether their tendency is ready
-  const tendencyMap = new Map(tendencies.map(t => [t.managerId, t]));
+  const tendencyMap = new Map<string, ManagerTendency>(sortedTendencies.map(t => [t.managerId, t]));
   const tendenciesContent = (
-    <div style={{ display: 'grid', gap: '1.25rem', gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))' }}>
-      {ownershipData.map((manager) => {
+    <div style={{ display: 'grid', gap: '1.25rem', gridTemplateColumns: isMobile ? '1fr' : 'repeat(auto-fill, minmax(340px, 1fr))' }}>
+      {sortedOwnership.map((manager) => {
         const tendency = tendencyMap.get(manager.managerId);
         const isCardLoading = loadingManagerIds?.has(manager.managerId) || (!tendency && (loadingManagerIds?.size ?? 0) > 0);
         const managerId = manager.managerId;
@@ -465,7 +522,7 @@ const ManagerInsights: React.FC<ManagerInsightsProps> = ({
                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
                       <TrendingUp style={{ color: 'var(--green)' }} size={14} />
                       <span style={{ fontFamily: "'Cinzel', serif", fontWeight: 900, fontSize: '1.4rem', color: 'var(--text-primary)' }}>
-                        {tendency.topPositions[0] || 'N/A'}
+                        {tendency.topPositions?.[0] || 'N/A'}
                       </span>
                     </div>
                   </div>
@@ -481,7 +538,7 @@ const ManagerInsights: React.FC<ManagerInsightsProps> = ({
                     Position Preferences
                   </div>
                   <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap' }}>
-                    {tendency.topPositions.map((pos, i) => (
+                    {(tendency.topPositions ?? []).map((pos, i) => (
                       <span
                         key={pos}
                         style={{
