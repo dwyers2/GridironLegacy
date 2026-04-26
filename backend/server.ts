@@ -1112,12 +1112,13 @@ app.get('/api/league-settings/:leagueKey', (req, res) => {
     isKeeperLeague: db.getIsKeeperLeague(leagueKey),
     maxKeepers: db.getMaxKeepers(leagueKey),
     maxYearsKept: db.getMaxYearsKept(leagueKey),
+    lockPastSeasons: db.getLockPastSeasons(leagueKey),
   });
 });
 
 app.post('/api/league-settings/:leagueKey', (req, res) => {
   const { leagueKey } = req.params;
-  const { isKeeperLeague, maxKeepers, maxYearsKept } = req.body;
+  const { isKeeperLeague, maxKeepers, maxYearsKept, lockPastSeasons } = req.body;
   if (isKeeperLeague !== undefined) {
     if (typeof isKeeperLeague !== 'boolean') return res.status(400).json({ error: 'isKeeperLeague must be boolean' });
     db.setIsKeeperLeague(leagueKey, isKeeperLeague);
@@ -1131,6 +1132,10 @@ app.post('/api/league-settings/:leagueKey', (req, res) => {
     const val = maxYearsKept === null ? null : Number(maxYearsKept);
     if (maxYearsKept !== null && (isNaN(val as number) || (val as number) < 1)) return res.status(400).json({ error: 'maxYearsKept must be a positive number or null' });
     db.setMaxYearsKept(leagueKey, val);
+  }
+  if (lockPastSeasons !== undefined) {
+    if (typeof lockPastSeasons !== 'boolean') return res.status(400).json({ error: 'lockPastSeasons must be boolean' });
+    db.setLockPastSeasons(leagueKey, lockPastSeasons);
   }
   res.json({ success: true });
 });
@@ -1292,6 +1297,15 @@ app.post('/api/keepers/manual', (req, res) => {
       return res.status(400).json({ error: 'leagueKey, teamKey, and playerName required' });
     }
     db.addManualKeeper(leagueKey, teamKey, playerKey || '', playerName, position || '', nflTeam || '');
+    try {
+      const league = db.db.prepare(`SELECT season FROM leagues WHERE league_key = ?`).get(leagueKey) as any;
+      const team = db.db.prepare(`SELECT manager_name FROM teams WHERE team_key = ? AND league_key = ?`).get(teamKey, leagueKey) as any;
+      db.logKeeperAction({
+        leagueKey, season: league?.season ?? '',
+        action: 'selected', playerName, playerKey, position,
+        teamKey, managerName: team?.manager_name,
+      });
+    } catch { /* non-fatal */ }
     res.json({ success: true });
   } catch (err: any) {
     res.status(500).json({ error: 'Failed to add manual keeper', message: err.message });
@@ -1306,6 +1320,15 @@ app.delete('/api/keepers/manual', (req, res) => {
       return res.status(400).json({ error: 'leagueKey, teamKey, and playerName required' });
     }
     db.removeManualKeeper(leagueKey, teamKey, playerName);
+    try {
+      const league = db.db.prepare(`SELECT season FROM leagues WHERE league_key = ?`).get(leagueKey) as any;
+      const team = db.db.prepare(`SELECT manager_name FROM teams WHERE team_key = ? AND league_key = ?`).get(teamKey, leagueKey) as any;
+      db.logKeeperAction({
+        leagueKey, season: league?.season ?? '',
+        action: 'deselected', playerName,
+        teamKey, managerName: team?.manager_name,
+      });
+    } catch { /* non-fatal */ }
     res.json({ success: true });
   } catch (err: any) {
     res.status(500).json({ error: 'Failed to remove manual keeper', message: err.message });
@@ -1329,9 +1352,38 @@ app.post('/api/keepers/toggle', (req, res) => {
     const { leagueKey, pick } = req.body;
     if (!leagueKey || pick === undefined) return res.status(400).json({ error: 'leagueKey and pick are required' });
     const isKeeper = db.toggleKeeper(leagueKey, Number(pick));
+    // Log the action — look up player/manager info from draft_picks
+    try {
+      const row = db.db.prepare(
+        `SELECT player_name, player_key, position, team_key, manager_name, season FROM draft_picks WHERE league_key = ? AND pick = ?`
+      ).get(leagueKey, Number(pick)) as any;
+      if (row) {
+        db.logKeeperAction({
+          leagueKey,
+          season: row.season,
+          action: isKeeper ? 'selected' : 'deselected',
+          playerName: row.player_name,
+          playerKey: row.player_key,
+          position: row.position,
+          teamKey: row.team_key,
+          managerName: row.manager_name,
+        });
+      }
+    } catch { /* non-fatal */ }
     res.json({ isKeeper, pick });
   } catch (err: any) {
     res.status(500).json({ error: 'Failed to toggle keeper', message: err.message });
+  }
+});
+
+// Keeper audit log
+app.get('/api/keeper-log/:leagueKey', (req, res) => {
+  try {
+    const { leagueKey } = req.params;
+    const entries = db.getKeeperLog(leagueKey);
+    res.json({ entries });
+  } catch (err: any) {
+    res.status(500).json({ error: 'Failed to get keeper log', message: err.message });
   }
 });
 

@@ -10,7 +10,7 @@ import { useIsMobile } from './hooks/useIsMobile';
 import {
   LayoutDashboard, Users, Award,
   ChevronRight, ChevronDown, ArrowLeft, LogOut, Loader2, Sparkles,
-  Trophy, TrendingUp, ShieldAlert, ClipboardList, Target, Shield, Settings, Star
+  Trophy, TrendingUp, ShieldAlert, ClipboardList, Target, Shield, Settings, Star, ScrollText
 } from 'lucide-react';
 
 const App: React.FC = () => {
@@ -28,7 +28,8 @@ const App: React.FC = () => {
   const [fetchProgress, setFetchProgress] = useState<FetchProgress | null>(null);
   const [draftData, setDraftData] = useState<SeasonDraftData[]>([]);
   const [draftLoading, setDraftLoading] = useState(false);
-  const [dashboardTab, setDashboardTab] = useState<'overview' | 'draft' | 'ownership' | 'tendencies' | 'owner-position' | 'keepers' | 'settings'>('overview');
+  const [dashboardTab, setDashboardTab] = useState<'overview' | 'draft' | 'ownership' | 'tendencies' | 'owner-position' | 'keepers' | 'log' | 'settings'>('overview');
+  const [keeperLog, setKeeperLog] = useState<Array<{ id: number; season: string; action: string; player_name: string; position: string | null; manager_name: string | null; created_at: string }>>([]);
   const [keeperSummary, setKeeperSummary] = useState<KeeperSummary | null>(null);
   const [keeperLoading, setKeeperLoading] = useState(false);
   const [refreshingManagers, setRefreshingManagers] = useState<Set<string>>(new Set());
@@ -909,6 +910,13 @@ const App: React.FC = () => {
                 }},
                 { id: 'owner-position', icon: <Target size={15} />, label: 'Owner Position', onClick: () => setDashboardTab('owner-position') },
                 ...(selectedLeague?.isKeeperLeague !== false ? [{ id: 'keepers', icon: <Star size={15} />, label: 'Keepers', onClick: () => { setDashboardTab('keepers'); handleLoadKeepers(); } }] : []),
+                ...(selectedLeague?.isKeeperLeague !== false ? [{ id: 'log', icon: <ScrollText size={15} />, label: 'Keeper Log', onClick: () => {
+                  setDashboardTab('log');
+                  if (selectedLeague) {
+                    fetch(`/api/keeper-log/${encodeURIComponent(selectedLeague.id)}`)
+                      .then(r => r.json()).then(d => setKeeperLog(d.entries || [])).catch(() => {});
+                  }
+                } }] : []),
                 { id: 'settings', icon: <Settings size={15} />, label: 'Settings', onClick: () => setDashboardTab('settings') },
               ] as const).map(({ id, icon, label, onClick, badge }: any) => {
                 const active = dashboardTab === id;
@@ -1153,6 +1161,7 @@ const App: React.FC = () => {
                   loading={draftLoading}
                   isKeeperLeague={selectedLeague?.isKeeperLeague !== false}
                   maxKeepers={selectedLeague?.maxKeepers}
+                  lockPastSeasons={selectedLeague?.lockPastSeasons !== false}
                   maxYearsKept={selectedLeague?.maxYearsKept}
                   playerYearsKept={(() => {
                     const map: Record<string, number> = {};
@@ -1242,8 +1251,81 @@ const App: React.FC = () => {
               </div>
             )}
 
+            {/* Keeper Log Tab */}
+            {dashboardTab === 'log' && (
+              <div className="pt-2">
+                <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', marginBottom: '1.5rem' }}>
+                  <div style={{ padding: '0.75rem', background: 'var(--gold-dim)', border: '1px solid rgba(212,160,23,0.2)', borderRadius: '8px' }}>
+                    <ScrollText style={{ color: 'var(--gold)' }} size={22} />
+                  </div>
+                  <div>
+                    <h2 style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: '1.6rem', letterSpacing: '0.08em', color: 'var(--text-primary)', margin: 0, textTransform: 'uppercase' }}>
+                      Keeper Log
+                    </h2>
+                    <p style={{ color: 'var(--text-secondary)', fontSize: '0.8rem', margin: '0.2rem 0 0', fontFamily: "'Outfit', sans-serif" }}>
+                      Audit trail of all keeper designations and removals
+                    </p>
+                  </div>
+                </div>
+                {keeperLog.length === 0 ? (
+                  <p style={{ color: 'var(--text-muted)', fontStyle: 'italic', fontFamily: "'Outfit', sans-serif", fontSize: '0.85rem', padding: '2rem 0' }}>
+                    No keeper changes recorded yet.
+                  </p>
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '1px', border: '1px solid var(--border)', borderRadius: '10px', overflow: 'hidden' }}>
+                    {keeperLog.map((entry, i) => {
+                      const isSelected = entry.action === 'selected';
+                      const date = new Date(entry.created_at);
+                      const dateStr = date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+                      const timeStr = date.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+                      return (
+                        <div key={entry.id} style={{
+                          display: 'flex', alignItems: 'center', gap: '0.75rem',
+                          padding: '0.75rem 1.1rem',
+                          background: i % 2 === 0 ? 'var(--surface)' : 'var(--surface-2)',
+                          borderBottom: i < keeperLog.length - 1 ? '1px solid var(--border)' : 'none',
+                        }}>
+                          <span style={{
+                            flexShrink: 0, fontSize: '0.6rem', fontWeight: 700,
+                            padding: '0.2rem 0.5rem', borderRadius: '3px',
+                            fontFamily: "'Barlow Condensed', sans-serif", letterSpacing: '0.1em', textTransform: 'uppercase',
+                            background: isSelected ? 'rgba(212,160,23,0.12)' : 'rgba(239,68,68,0.1)',
+                            border: `1px solid ${isSelected ? 'rgba(212,160,23,0.35)' : 'rgba(239,68,68,0.3)'}`,
+                            color: isSelected ? 'var(--gold)' : '#F87171',
+                            minWidth: '72px', textAlign: 'center',
+                          }}>
+                            {isSelected ? 'Kept' : 'Removed'}
+                          </span>
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <span style={{ fontFamily: "'Outfit', sans-serif", fontWeight: 600, fontSize: '0.88rem', color: 'var(--text-primary)' }}>
+                              {entry.player_name}
+                            </span>
+                            {entry.position && (
+                              <span style={{ marginLeft: '0.4rem', fontSize: '0.65rem', fontWeight: 700, color: 'var(--text-muted)', fontFamily: "'Barlow Condensed', sans-serif", letterSpacing: '0.06em' }}>
+                                {entry.position}
+                              </span>
+                            )}
+                          </div>
+                          <div style={{ textAlign: 'right', flexShrink: 0 }}>
+                            {entry.manager_name && (
+                              <div style={{ fontFamily: "'Outfit', sans-serif", fontSize: '0.78rem', fontWeight: 500, color: 'var(--text-secondary)' }}>
+                                {entry.manager_name}
+                              </div>
+                            )}
+                            <div style={{ fontFamily: 'monospace', fontSize: '0.68rem', color: 'var(--text-muted)', marginTop: '0.1rem' }}>
+                              {dateStr} · {timeStr} · {entry.season}
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
+
             {dashboardTab === 'settings' && selectedLeague && (() => {
-              const saveLeagueSetting = async (patch: { isKeeperLeague?: boolean; maxKeepers?: number | null; maxYearsKept?: number | null }) => {
+              const saveLeagueSetting = async (patch: { isKeeperLeague?: boolean; maxKeepers?: number | null; maxYearsKept?: number | null; lockPastSeasons?: boolean }) => {
                 await fetch(`/api/league-settings/${encodeURIComponent(selectedLeague.id)}`, {
                   method: 'POST', headers: { 'Content-Type': 'application/json' },
                   body: JSON.stringify(patch),
@@ -1328,6 +1410,35 @@ const App: React.FC = () => {
                             fontSize: '0.9rem', fontWeight: 600,
                           }}
                         />
+                      </div>
+                    )}
+
+                    {/* Lock past seasons — only shown when keeper league */}
+                    {selectedLeague.isKeeperLeague && (
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '1.1rem 1.25rem', background: 'var(--surface)', borderTop: '1px solid var(--border)' }}>
+                        <div>
+                          <div style={{ fontFamily: "'Outfit', sans-serif", fontWeight: 600, fontSize: '0.9rem', color: 'var(--text-primary)' }}>Lock Past Season Keepers</div>
+                          <div style={{ fontFamily: "'Outfit', sans-serif", fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '0.15rem' }}>
+                            Prevent editing keeper designations on older seasons.
+                          </div>
+                        </div>
+                        <button
+                          onClick={() => saveLeagueSetting({ lockPastSeasons: !(selectedLeague.lockPastSeasons !== false) })}
+                          style={{
+                            flexShrink: 0, marginLeft: '1.5rem',
+                            width: '44px', height: '24px', borderRadius: '12px',
+                            background: selectedLeague.lockPastSeasons !== false ? 'var(--gold)' : 'rgba(255,255,255,0.1)',
+                            border: 'none', cursor: 'pointer', position: 'relative', transition: 'background 0.2s',
+                          }}
+                        >
+                          <span style={{
+                            position: 'absolute', top: '3px',
+                            left: selectedLeague.lockPastSeasons !== false ? '23px' : '3px',
+                            width: '18px', height: '18px', borderRadius: '50%',
+                            background: selectedLeague.lockPastSeasons !== false ? '#0C0F16' : 'var(--text-muted)',
+                            transition: 'left 0.2s',
+                          }} />
+                        </button>
                       </div>
                     )}
 

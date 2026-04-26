@@ -10,6 +10,8 @@ export interface League {
   maxKeepers?: number | null;
   /** Maximum consecutive years a player can be kept, null = no limit set */
   maxYearsKept?: number | null;
+  /** Whether past seasons are locked from keeper edits (default true) */
+  lockPastSeasons?: boolean;
 }
 
 export interface PlayerStats {
