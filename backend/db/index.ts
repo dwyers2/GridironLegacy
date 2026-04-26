@@ -65,6 +65,9 @@ export function initializeDatabase() {
   if (!leagueColumns.includes('max_years_kept')) {
     db.exec('ALTER TABLE leagues ADD COLUMN max_years_kept INTEGER DEFAULT NULL');
   }
+  if (!leagueColumns.includes('lock_past_seasons')) {
+    db.exec('ALTER TABLE leagues ADD COLUMN lock_past_seasons INTEGER DEFAULT 1');
+  }
 
   // Migration: add cost and manager_name columns to draft_picks
   const draftPickColumns = (db.pragma('table_info(draft_picks)') as any[]).map((c: any) => c.name);
@@ -77,6 +80,23 @@ export function initializeDatabase() {
   if (!draftPickColumns.includes('season_points')) {
     db.exec('ALTER TABLE draft_picks ADD COLUMN season_points REAL DEFAULT NULL');
   }
+
+  // Keeper audit log
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS keeper_log (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      league_key TEXT NOT NULL,
+      season TEXT NOT NULL,
+      action TEXT NOT NULL,
+      player_name TEXT NOT NULL,
+      player_key TEXT,
+      position TEXT,
+      team_key TEXT,
+      manager_name TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS idx_keeper_log_league ON keeper_log(league_key);
+  `);
 
   // FantasyCalc dynasty rankings cache
   db.exec(`
@@ -123,6 +143,46 @@ export function getMaxYearsKept(leagueKey: string): number | null {
 
 export function setMaxYearsKept(leagueKey: string, value: number | null) {
   db.prepare('UPDATE leagues SET max_years_kept = ? WHERE league_key = ?').run(value, leagueKey);
+}
+
+export function getLockPastSeasons(leagueKey: string): boolean {
+  const row = db.prepare('SELECT lock_past_seasons FROM leagues WHERE league_key = ?').get(leagueKey) as any;
+  if (!row || row.lock_past_seasons === null || row.lock_past_seasons === undefined) return true;
+  return row.lock_past_seasons === 1;
+}
+
+export function setLockPastSeasons(leagueKey: string, value: boolean) {
+  db.prepare('UPDATE leagues SET lock_past_seasons = ? WHERE league_key = ?').run(value ? 1 : 0, leagueKey);
+}
+
+export function logKeeperAction(entry: {
+  leagueKey: string;
+  season: string;
+  action: 'selected' | 'deselected';
+  playerName: string;
+  playerKey?: string;
+  position?: string;
+  teamKey?: string;
+  managerName?: string;
+}) {
+  db.prepare(`
+    INSERT INTO keeper_log (league_key, season, action, player_name, player_key, position, team_key, manager_name)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    entry.leagueKey, entry.season, entry.action,
+    entry.playerName, entry.playerKey ?? null, entry.position ?? null,
+    entry.teamKey ?? null, entry.managerName ?? null,
+  );
+}
+
+export function getKeeperLog(leagueKey: string, limit = 200): Array<{
+  id: number; league_key: string; season: string; action: string;
+  player_name: string; player_key: string | null; position: string | null;
+  team_key: string | null; manager_name: string | null; created_at: string;
+}> {
+  return db.prepare(`
+    SELECT * FROM keeper_log WHERE league_key = ? ORDER BY created_at DESC LIMIT ?
+  `).all(leagueKey, limit) as any;
 }
 
 // Cache a league

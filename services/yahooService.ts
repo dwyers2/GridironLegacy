@@ -294,9 +294,9 @@ export const getLeagues = async (): Promise<any[]> => {
       try {
         const settingsRes = await fetch(`${BACKEND_URL}/league-settings/${encodeURIComponent(league.id)}`);
         if (!settingsRes.ok) return league;
-        const { isKeeperLeague, maxKeepers, maxYearsKept } = await settingsRes.json();
+        const { isKeeperLeague, maxKeepers, maxYearsKept, lockPastSeasons } = await settingsRes.json();
         // null means never been set — default false
-        return { ...league, isKeeperLeague: isKeeperLeague === true, maxKeepers: maxKeepers ?? null, maxYearsKept: maxYearsKept ?? null };
+        return { ...league, isKeeperLeague: isKeeperLeague === true, maxKeepers: maxKeepers ?? null, maxYearsKept: maxYearsKept ?? null, lockPastSeasons: lockPastSeasons !== false };
       } catch (e) {
         return league;
       }

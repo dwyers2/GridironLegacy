@@ -11,6 +11,7 @@ interface Props {
   loading: boolean;
   isKeeperLeague?: boolean;
   maxKeepers?: number | null;
+  lockPastSeasons?: boolean;
   maxYearsKept?: number | null;
   /** Map of normalized player ID → consecutive years kept (from keeper summary) */
   playerYearsKept?: Record<string, number>;
@@ -468,7 +469,7 @@ function DraftGrid({ season, keeperPicks, onToggleKeeper, maxKeepers, maxYearsKe
   );
 }
 
-export default function DraftResults({ draftSeasons, loading, isKeeperLeague = true, maxKeepers, maxYearsKept, playerYearsKept }: Props) {
+export default function DraftResults({ draftSeasons, loading, isKeeperLeague = true, maxKeepers, lockPastSeasons = true, maxYearsKept, playerYearsKept }: Props) {
   const [expanded, setExpanded] = useState<Set<string>>(
     new Set(draftSeasons.length > 0 ? [draftSeasons[0].season] : [])
   );
@@ -601,7 +602,7 @@ export default function DraftResults({ draftSeasons, loading, isKeeperLeague = t
       </div>
 
       {draftSeasons.map(season => {
-        const isLocked = isKeeperLeague && season.season !== mostRecentSeason;
+        const isLocked = isKeeperLeague && lockPastSeasons && season.season !== mostRecentSeason;
         const isOpen = expanded.has(season.season);
         const numPicks = season.picks.length;
         const numTeams = season.teams.length;
