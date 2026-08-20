@@ -183,8 +183,8 @@ export default function NewDraftBoard({
   const numTeams = teams.length;
 
   // Overall pick number follows a snake: odd rounds run left-to-right, even rounds right-to-left.
-  const getPickNum = (round: number, teamIndex: number) =>
-    (round - 1) * numTeams + (round % 2 === 1 ? teamIndex : numTeams - teamIndex - 1) + 1;
+  const getPickNum = (round: number, teamIndex: number, isSnakeOrdered: boolean) =>
+    (round - 1) * numTeams + (isSnakeOrdered || round % 2 === 1 ? teamIndex : numTeams - teamIndex - 1) + 1;
 
   const updateCell = (round: number, teamKey: string, value: string) => {
     setBoard(prev => {
@@ -238,7 +238,7 @@ export default function NewDraftBoard({
   };
 
   // ── Pick cell ──────────────────────────────────────────────────────────────
-  const renderCell = (round: number, team: DraftBoardTeam, teamIndex: number) => {
+  const renderCell = (round: number, team: DraftBoardTeam, teamIndex: number, isSnakeOrdered = false) => {
     const key = cellKey(round, team.teamKey);
     const value = displayedBoard[key];
     const isActive = activeCell === key;
@@ -247,7 +247,7 @@ export default function NewDraftBoard({
     const isFilled = !!value?.playerName;
     const isKeeper = !!value?.isKeeperPick;
     const tradedTo = tradedPicks[key] ?? null;
-    const pickNum = getPickNum(round, teamIndex);
+    const pickNum = getPickNum(round, teamIndex, isSnakeOrdered);
     const showDropdown = isActive &&
       (loadingSuggestions || suggestions.length > 0 || activeValue.trim().length >= 2 || (isFilled && !isKeeper));
 
@@ -703,7 +703,7 @@ export default function NewDraftBoard({
                   }}>
                     {team.managerName}
                   </div>
-                  {renderCell(round, team, ti)}
+                  {renderCell(round, team, ti, true)}
                 </div>
               ))}
             </section>
