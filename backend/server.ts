@@ -23,6 +23,8 @@ const PORT = Number(process.env.PORT) || 3001;
 const CLIENT_ID = process.env.YAHOO_CLIENT_ID || '[REDACTED_YAHOO_CLIENT_ID]';
 const CLIENT_SECRET = process.env.YAHOO_CLIENT_SECRET || '[REDACTED_YAHOO_CLIENT_SECRET]';
 const REDIRECT_URI = process.env.REDIRECT_URI || 'https://nonexotically-nonphonetical-aidan.ngrok-free.dev';
+const CACHE_RECOVERY_CODE = process.env.CACHE_RECOVERY_CODE;
+const CACHE_RECOVERY_TTL_MS = 12 * 60 * 60 * 1000;
 
 // Log configuration on startup
 console.log('\n🔧 Configuration:');
@@ -100,6 +102,42 @@ async function callDeepSeek(prompt: string): Promise<string | null> {
 app.use(cors());
 app.use(express.json({ limit: '50mb' })); // Increase limit for large roster payloads
 
+function createRecoveryToken() {
+  const expiresAt = Date.now() + CACHE_RECOVERY_TTL_MS;
+  const payload = Buffer.from(JSON.stringify({ scope: 'cached-read', expiresAt })).toString('base64url');
+  const signature = crypto.createHmac('sha256', CACHE_RECOVERY_CODE!).update(payload).digest('base64url');
+  return `${payload}.${signature}`;
+}
+
+function isRecoveryTokenValid(token: string | undefined) {
+  if (!CACHE_RECOVERY_CODE || !token) return false;
+  const [payload, signature] = token.split('.');
+  if (!payload || !signature) return false;
+  const expected = crypto.createHmac('sha256', CACHE_RECOVERY_CODE).update(payload).digest('base64url');
+  const validSignature = signature.length === expected.length && crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expected));
+  if (!validSignature) return false;
+  try {
+    const data = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8'));
+    return data.scope === 'cached-read' && Number(data.expiresAt) > Date.now();
+  } catch {
+    return false;
+  }
+}
+
+app.post('/api/recovery/access', (req, res) => {
+  if (!CACHE_RECOVERY_CODE) return res.status(404).json({ error: 'Cached recovery is not configured' });
+  const suppliedCode = typeof req.body?.code === 'string' ? req.body.code.trim() : '';
+  const valid = suppliedCode.length === CACHE_RECOVERY_CODE.length && crypto.timingSafeEqual(Buffer.from(suppliedCode), Buffer.from(CACHE_RECOVERY_CODE));
+  if (!valid) return res.status(401).json({ error: 'Invalid recovery code' });
+  res.json({ token: createRecoveryToken(), expiresIn: CACHE_RECOVERY_TTL_MS });
+});
+
+app.get('/api/recovery/leagues', (req, res) => {
+  const token = typeof req.headers.authorization === 'string' ? req.headers.authorization.replace(/^Bearer\s+/i, '') : undefined;
+  if (!isRecoveryTokenValid(token)) return res.status(401).json({ error: 'Invalid or expired recovery session' });
+  res.json({ leagues: db.getCachedLeagues() });
+});
+
 // 1️⃣ Generate Yahoo OAuth URL (Confidential Client - No PKCE)
 app.get('/api/auth/url', (req, res) => {
   // For confidential clients, we don't use PKCE
@@ -113,6 +151,8 @@ app.get('/api/auth/url', (req, res) => {
     client_id: CLIENT_ID,
     redirect_uri: REDIRECT_URI,
     response_type: 'code',
+    scope: 'fspt-r',
+    prompt: 'consent',
   });
 
   const url = `https://api.login.yahoo.com/oauth2/request_auth?${params.toString()}`;
@@ -583,7 +623,7 @@ app.post('/api/manager-tendencies/single', async (req, res) => {
   players.forEach((p: any) => { positionCounts[p.position || 'Unknown'] = (positionCounts[p.position || 'Unknown'] || 0) + (p.timesOwned || 1); });
   const topPositions = Object.entries(positionCounts).sort(([,a],[,b]) => (b as number)-(a as number)).slice(0,3).map(([pos]) => pos);
 
-  const prompt = `You are a fantasy football analyst. Write 2-3 punchy sentences about this manager's tendencies:
+  const prompt = `You are a sardonic, snarky fantasy football analyst. Write 2-3 punchy sentences about this manager's tendencies:
 
 Manager: ${manager.managerName}
 Top players owned: ${topPlayers.map((p: any) => `${p.playerName} (${p.position}, owned ${p.timesOwned}x)`).join(', ')}
@@ -591,7 +631,7 @@ Position preference: ${topPositions.join(', ')}
 Loyalty score: ${manager.loyaltyScore}%${loyaltyDescription ? ` (${loyaltyDescription} in this league)` : ''}
 ${leagueContext ? `League context: Loyalty scores range from ${minLoyalty}% to ${maxLoyalty}%, league average is ${avgLoyalty}%. This manager ranks #${loyaltyRank} of ${totalManagers}.` : ''}
 
-Focus on their player preferences and draft tendencies. Only mention loyalty if it's notably high or low relative to the league. Keep it analytical but entertaining. Return ONLY the analysis text, no JSON.`;
+Focus on their early round draft tendencies. Only mention loyalty if it's notably high or low relative to the league. Keep it entertaining. Return ONLY the analysis text, no JSON.`;
 
   let analysis = manager.analysis; // fallback to data-driven
   try {
@@ -817,9 +857,13 @@ app.post('/api/cache/current-rosters', (req, res) => {
     const tradeDeadline = db.getTradeDeadline(leagueKey);
     const deadlineMs = tradeDeadline ? new Date(tradeDeadline + 'T23:59:59').getTime() : null;
     const roundByPlayerId = db.getDraftRoundsForLeague(leagueKey);
-    const everKeptIds = db.getEverKeptPlayerIds();
 
-    // Kept 2+ consecutive years → no longer eligible
+    // Keeper eligibility from league settings
+    const costRule = db.getKeeperCostRule(leagueKey);
+    const maxYearsKeptSetting = db.getMaxYearsKept(leagueKey);
+    // round_minus_1: round 1 drafts cost round 0 (invalid) → only round 1 ineligible
+    const minEligibleRound = costRule === 'round_minus_1' ? 2 : 1;
+
     const chain = db.getChainContaining(leagueKey);
     const chainKeys = chain ? chain.map((c: any) => c.leagueKey) : [];
     const priorSeason = String(Number(season) - 1);
@@ -827,13 +871,12 @@ app.post('/api/cache/current-rosters', (req, res) => {
 
     const enriched = entries.map((e: any) => {
       const draftRound = roundByPlayerId.get(e.playerId);
-      const wasEverKept = everKeptIds.has(e.playerId);
       const timesKept = timesKeptById.get(e.playerId) || 0;
       const isPostDeadline = !!deadlineMs && !!e.acquisitionDate
         && (e.acquisitionType === 'freeagent' || e.acquisitionType === 'waivers')
         && new Date(e.acquisitionDate).getTime() > deadlineMs;
-      const isTopRound = !wasEverKept && draftRound !== undefined && draftRound <= 4;
-      const isMaxKept = timesKept >= 2;
+      const isTopRound = draftRound !== undefined && draftRound < minEligibleRound;
+      const isMaxKept = maxYearsKeptSetting != null && timesKept >= maxYearsKeptSetting;
       return { ...e, isKeeperIneligible: isPostDeadline || isTopRound || isMaxKept };
     });
 
@@ -1026,10 +1069,26 @@ app.post('/api/cache/teams', (req, res) => {
   }
 });
 
+// Cache roster positions for a single league (backfill path)
+app.post('/api/cache/roster-positions', (req, res) => {
+  try {
+    const { leagueKey, positions } = req.body;
+    if (!leagueKey || !Array.isArray(positions) || positions.length === 0) {
+      return res.status(400).json({ error: 'leagueKey and non-empty positions array required' });
+    }
+    db.cacheRosterPositions(leagueKey, positions);
+    console.log(`📋 Backfilled ${positions.length} roster positions for ${leagueKey}`);
+    res.json({ ok: true });
+  } catch (err: any) {
+    console.error('❌ Failed to cache roster positions:', err);
+    res.status(500).json({ error: 'Failed to cache roster positions', message: err.message });
+  }
+});
+
 // Cache draft results for a league season
 app.post('/api/cache/draft', (req, res) => {
   try {
-    const { leagueKey, season, picks, trades, rootKey, chain } = req.body;
+    const { leagueKey, season, picks, trades, rosterPositions, rootKey, chain } = req.body;
     if (!leagueKey || !season || !Array.isArray(picks)) {
       return res.status(400).json({ error: 'leagueKey, season, and picks array required' });
     }
@@ -1038,6 +1097,10 @@ app.post('/api/cache/draft', (req, res) => {
     if (Array.isArray(trades) && trades.length > 0) {
       db.cacheDraftPickTrades(leagueKey, trades);
       console.log(`🔄 Cached ${trades.length} traded picks for ${season}`);
+    }
+    if (Array.isArray(rosterPositions) && rosterPositions.length > 0) {
+      db.cacheRosterPositions(leagueKey, rosterPositions);
+      console.log(`📋 Cached ${rosterPositions.length} roster positions for ${season}`);
     }
     // Atomically store the league chain when provided (sent with the root/current season's picks)
     if (rootKey && Array.isArray(chain) && chain.length > 0) {
@@ -1079,8 +1142,9 @@ app.get('/api/cache/draft/chain/:leagueKey', (req, res) => {
     const seasons = chain.map(({ leagueKey: lk, season }) => {
       const picks = db.hasDraftData(lk) ? db.getDraftResultsForLeague(lk) : [];
       const hasNames = picks.some(p => p.player_name && p.player_name.length > 0);
+      const rosterPositions = db.getRosterPositions(lk);
       console.log(`  season=${season} lk=${lk} picks=${picks.length} hasNames=${hasNames}`);
-      return { leagueKey: lk, season, picks, hasNames };
+      return { leagueKey: lk, season, picks, hasNames, rosterPositions };
     });
 
     // A season with 0 picks is OK (draft hasn't happened yet) — but at least one season must have picks
@@ -1089,6 +1153,27 @@ app.get('/api/cache/draft/chain/:leagueKey', (req, res) => {
     res.json({ found: true, allCached, seasons });
   } catch (err: any) {
     res.status(500).json({ error: 'Failed to get chain', message: err.message });
+  }
+});
+
+app.get('/api/cache/future-draft-trades/:leagueKey', (req, res) => {
+  res.json({ trades: db.getFutureDraftPickTrades(req.params.leagueKey) });
+});
+
+app.post('/api/cache/future-draft-trades/:leagueKey', (req, res) => {
+  try {
+    const trades = req.body?.trades;
+    if (!Array.isArray(trades)) return res.status(400).json({ error: 'trades array required' });
+    const normalized = trades.map((trade: any) => ({
+      draftSeason: String(trade.draftSeason),
+      round: Number(trade.round),
+      fromTeamKey: String(trade.fromTeamKey),
+      toTeamKey: String(trade.toTeamKey),
+    })).filter((trade: any) => trade.draftSeason && Number.isInteger(trade.round) && trade.round > 0 && trade.fromTeamKey && trade.toTeamKey);
+    db.setFutureDraftPickTrades(req.params.leagueKey, normalized);
+    res.json({ success: true, count: normalized.length });
+  } catch (err: any) {
+    res.status(500).json({ error: 'Failed to save future draft trades', message: err.message });
   }
 });
 
@@ -1113,12 +1198,15 @@ app.get('/api/league-settings/:leagueKey', (req, res) => {
     maxKeepers: db.getMaxKeepers(leagueKey),
     maxYearsKept: db.getMaxYearsKept(leagueKey),
     lockPastSeasons: db.getLockPastSeasons(leagueKey),
+    waiverKeeperRound: db.getWaiverKeeperRound(leagueKey),
+    keeperCostRule: db.getKeeperCostRule(leagueKey),
+    draftBoardOrder: db.getDraftBoardOrder(leagueKey),
   });
 });
 
 app.post('/api/league-settings/:leagueKey', (req, res) => {
   const { leagueKey } = req.params;
-  const { isKeeperLeague, maxKeepers, maxYearsKept, lockPastSeasons } = req.body;
+  const { isKeeperLeague, maxKeepers, maxYearsKept, lockPastSeasons, waiverKeeperRound, keeperCostRule, draftBoardOrder } = req.body;
   if (isKeeperLeague !== undefined) {
     if (typeof isKeeperLeague !== 'boolean') return res.status(400).json({ error: 'isKeeperLeague must be boolean' });
     db.setIsKeeperLeague(leagueKey, isKeeperLeague);
@@ -1137,6 +1225,21 @@ app.post('/api/league-settings/:leagueKey', (req, res) => {
     if (typeof lockPastSeasons !== 'boolean') return res.status(400).json({ error: 'lockPastSeasons must be boolean' });
     db.setLockPastSeasons(leagueKey, lockPastSeasons);
   }
+  if (waiverKeeperRound !== undefined) {
+    const val = waiverKeeperRound === null ? null : Number(waiverKeeperRound);
+    if (waiverKeeperRound !== null && (isNaN(val as number) || (val as number) < 1)) return res.status(400).json({ error: 'waiverKeeperRound must be a positive number or null' });
+    db.setWaiverKeeperRound(leagueKey, val);
+  }
+  if (keeperCostRule !== undefined) {
+    if (!['round_minus_1', 'round', 'na'].includes(keeperCostRule)) return res.status(400).json({ error: 'keeperCostRule must be round_minus_1, round, or na' });
+    db.setKeeperCostRule(leagueKey, keeperCostRule);
+  }
+  if (draftBoardOrder !== undefined) {
+    if (draftBoardOrder !== null && (!Array.isArray(draftBoardOrder) || draftBoardOrder.some((value: unknown) => typeof value !== 'string'))) {
+      return res.status(400).json({ error: 'draftBoardOrder must be an array of strings or null' });
+    }
+    db.setDraftBoardOrder(leagueKey, draftBoardOrder ?? null);
+  }
   res.json({ success: true });
 });
 
@@ -1146,7 +1249,8 @@ app.get('/api/cache/draft/:leagueKey', (req, res) => {
     const { leagueKey } = req.params;
     const exists = db.hasDraftData(leagueKey);
     const picks = exists ? db.getDraftResultsForLeague(leagueKey) : [];
-    res.json({ picks, count: picks.length, exists });
+    const rosterPositions = db.getRosterPositions(leagueKey);
+    res.json({ picks, count: picks.length, exists, rosterPositions });
   } catch (err: any) {
     console.error('❌ Failed to get draft data:', err);
     res.status(500).json({ error: 'Failed to get draft data', message: err.message });
@@ -1169,6 +1273,10 @@ app.get('/api/keepers/summary/:leagueKey', (req, res) => {
 
     const chainLeagueKeys = chain.map((c: any) => c.leagueKey);
     const allKeepers = db.getKeeperSummaryForChain(chainLeagueKeys);
+    const waiverRound = db.getWaiverKeeperRound(mostRecentLeagueKey) ?? 9;
+    const costRule = db.getKeeperCostRule(mostRecentLeagueKey);
+    const computeCost = (roundDrafted: number) =>
+      costRule === 'na' ? 0 : costRule === 'round' ? roundDrafted : roundDrafted - 1;
 
     // Normalize player_key to just the numeric ID so cross-season comparisons work
     // e.g. "423.p.30977" (2024) and "420.p.30977" (2023) both map to "30977"
@@ -1211,22 +1319,38 @@ app.get('/api/keepers/summary/:leagueKey', (req, res) => {
         position: k.position,
         nflTeam: k.nfl_team,
         roundDrafted: k.round,
-        keeperCost: k.round - 1,
+        keeperCost: computeCost(k.round),
         consecutiveYears: getConsecutiveYears(k.player_key),
         isManual: false,
+        pick: k.pick,
       });
     }
 
-    // Add manual keepers
+    // Build a map of normalized player ID → draft round for the most recent season
+    // so traded players still use their actual draft round cost, not the waiver round
+    const placeholdersChain = chainLeagueKeys.map(() => '?').join(',');
+    const draftRoundByPlayerId: Map<string, number> = new Map();
+    const draftPickRows = db.db.prepare(
+      `SELECT player_key, round FROM draft_picks WHERE season = ? AND league_key IN (${placeholdersChain})`
+    ).all(mostRecentSeason, ...chainLeagueKeys) as Array<{ player_key: string; round: number }>;
+    for (const row of draftPickRows) {
+      draftRoundByPlayerId.set(extractPlayerId(row.player_key), row.round);
+    }
+
+    // Add manual keepers — use actual draft round cost if player was drafted, else waiverRound
     for (const mk of db.getManualKeepersForLeague(mostRecentLeagueKey)) {
       if (managerMap[mk.team_key]) {
+        const pid = mk.player_key ? extractPlayerId(mk.player_key) : null;
+        const draftedRound = pid ? draftRoundByPlayerId.get(pid) : undefined;
+        const roundDrafted = draftedRound ?? waiverRound;
+        const keeperCost = computeCost(roundDrafted);
         managerMap[mk.team_key].keepers.push({
           playerKey: mk.player_key || '',
           playerName: mk.player_name,
           position: mk.position,
           nflTeam: mk.nfl_team,
-          roundDrafted: 0,
-          keeperCost: 0,
+          roundDrafted,
+          keeperCost,
           consecutiveYears: mk.player_key ? getConsecutiveYears(mk.player_key) : 0,
           isManual: true,
         });
@@ -1238,7 +1362,7 @@ app.get('/api/keepers/summary/:leagueKey', (req, res) => {
     for (const m of Object.values(managerMap)) {
       const usedCosts = new Set<number>();
       for (const keeper of m.keepers as any[]) {
-        if (keeper.isManual || keeper.keeperCost <= 0) continue;
+        if (keeper.keeperCost <= 0) continue;
         if (usedCosts.has(keeper.keeperCost)) {
           keeper.keeperCost = keeper.roundDrafted - 2;
         }
