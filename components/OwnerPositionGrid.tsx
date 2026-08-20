@@ -127,6 +127,29 @@ export default function OwnerPositionGrid({ draftSeasons, loading, myManagerName
   }
 
   const allSeasons = sorted.map(s => s.season);
+  const averagePositionCounts = new Map<number, Map<string, number>>();
+  for (let round = 1; round <= MAX_ROUNDS; round++) {
+    averagePositionCounts.set(round, new Map(POSITION_ORDER.map(pos => [pos, 0])));
+  }
+  for (const season of sorted) {
+    for (const pick of season.picks) {
+      if (pick.round < 1 || pick.round > MAX_ROUNDS || !pick.position) continue;
+      const position = pick.position === 'D/ST' ? 'DEF' : pick.position;
+      const counts = averagePositionCounts.get(pick.round);
+      if (counts?.has(position)) counts.set(position, (counts.get(position) ?? 0) + 1);
+    }
+  }
+  for (const counts of averagePositionCounts.values()) {
+    for (const position of POSITION_ORDER) counts.set(position, (counts.get(position) ?? 0) / sorted.length);
+  }
+  const formatAveragePositions = (round: number) => {
+    const counts = averagePositionCounts.get(round);
+    if (!counts) return '—';
+    return POSITION_ORDER
+      .filter(position => (counts.get(position) ?? 0) > 0)
+      .map(position => `${position} ${(counts.get(position) ?? 0).toFixed(1)}`)
+      .join(' · ') || '—';
+  };
 
   if (isMobile) {
     const displayManager = selectedManagerName
@@ -177,6 +200,7 @@ export default function OwnerPositionGrid({ draftSeasons, loading, myManagerName
               <thead>
                 <tr>
                   <th style={{ padding: '0.75rem 1rem', fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: '0.6rem', letterSpacing: '0.18em', textTransform: 'uppercase', color: 'var(--text-muted)', textAlign: 'left', borderBottom: '1px solid var(--border)', background: 'var(--surface)', minWidth: '72px' }}>Round</th>
+                  <th style={{ padding: '0.75rem 1rem', fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: '0.6rem', letterSpacing: '0.12em', textTransform: 'uppercase', color: 'var(--text-muted)', borderBottom: '1px solid var(--border)', borderLeft: '1px solid rgba(212,160,23,0.07)', background: 'var(--surface)', textAlign: 'center', minWidth: '220px' }}>Avg / Position</th>
                   <th style={{ padding: '0.75rem 1rem', fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: '0.7rem', letterSpacing: '0.06em', color: 'var(--gold)', borderBottom: '1px solid var(--border)', borderLeft: '1px solid rgba(212,160,23,0.07)', background: 'var(--surface)', textAlign: 'center' }}>
                     {displayManager.managerName}
                   </th>
@@ -189,6 +213,9 @@ export default function OwnerPositionGrid({ draftSeasons, loading, myManagerName
                     <tr key={round}>
                       <td style={{ padding: '0.55rem 1rem', fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: '0.75rem', letterSpacing: '0.1em', color: 'var(--text-muted)', borderBottom: '1px solid rgba(212,160,23,0.05)', background: 'var(--surface-2)' }}>
                         {round}
+                      </td>
+                      <td style={{ padding: '0.45rem 0.75rem', fontFamily: "'Outfit', sans-serif", fontSize: '0.64rem', color: 'var(--text-secondary)', borderBottom: '1px solid rgba(212,160,23,0.04)', borderLeft: '1px solid rgba(212,160,23,0.05)', textAlign: 'center', whiteSpace: 'nowrap' }}>
+                        {formatAveragePositions(round)}
                       </td>
                       <td style={{ padding: '0.45rem 0.75rem', borderBottom: '1px solid rgba(212,160,23,0.04)', borderLeft: '1px solid rgba(212,160,23,0.05)', verticalAlign: 'middle' }}>
                         <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap', justifyContent: 'center', alignItems: 'center', minHeight: '18px' }}>
@@ -260,7 +287,7 @@ export default function OwnerPositionGrid({ draftSeasons, loading, myManagerName
         <table style={{ borderCollapse: 'collapse', minWidth: 'max-content', width: '100%' }}>
           <thead>
             <tr>
-              <th style={{
+                <th style={{
                 padding: '0.75rem 1rem',
                 fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700,
                 fontSize: '0.6rem', letterSpacing: '0.18em', textTransform: 'uppercase',
@@ -271,6 +298,17 @@ export default function OwnerPositionGrid({ draftSeasons, loading, myManagerName
                 minWidth: '72px',
               }}>
                 Round
+              </th>
+              <th style={{
+                padding: '0.75rem 1rem',
+                fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700,
+                fontSize: '0.6rem', letterSpacing: '0.12em', textTransform: 'uppercase',
+                color: 'var(--text-muted)', textAlign: 'center', whiteSpace: 'nowrap',
+                borderBottom: '1px solid var(--border)',
+                borderLeft: '1px solid rgba(212,160,23,0.07)',
+                background: 'var(--surface)',
+              }}>
+                Avg / Position
               </th>
               {recentManagers.map(manager => (
                 <th key={manager.teamKey} style={{
@@ -308,6 +346,15 @@ export default function OwnerPositionGrid({ draftSeasons, loading, myManagerName
                   position: 'sticky', left: 0, zIndex: 5,
                 }}>
                   {round}
+                </td>
+                <td style={{
+                  padding: '0.45rem 0.75rem',
+                  fontFamily: "'Outfit', sans-serif", fontSize: '0.64rem',
+                  color: 'var(--text-secondary)', textAlign: 'center', whiteSpace: 'nowrap',
+                  borderBottom: '1px solid rgba(212,160,23,0.04)',
+                  borderLeft: '1px solid rgba(212,160,23,0.05)',
+                }}>
+                  {formatAveragePositions(round)}
                 </td>
 
                 {/* One cell per manager */}
