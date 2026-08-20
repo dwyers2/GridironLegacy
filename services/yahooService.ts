@@ -1,6 +1,7 @@
 import { League, PlayerStats, ManagerHistory, SeasonRosterData, TeamInfo, ManagerOwnershipData, PlayerOwnership, FetchProgress, DraftPick, SeasonDraftData, RosterPlayer, TeamRoster } from '../types';
 
 const BACKEND_URL = '/api';
+const MIN_SWITCH_LEAGUE_SEASON = 2025;
 
 export const isRecoveryMode = (): boolean => Boolean(localStorage.getItem('cached_recovery_token'));
 
@@ -19,7 +20,7 @@ export const recoverCachedAccess = async (code: string): Promise<any[]> => {
   });
   const leaguesData = await leaguesRes.json();
   if (!leaguesRes.ok) throw new Error(leaguesData.error || 'Could not load cached leagues');
-  return (leaguesData.leagues || []).map((league: any) => ({
+  return (leaguesData.leagues || []).filter((league: any) => Number(league.season) >= MIN_SWITCH_LEAGUE_SEASON).map((league: any) => ({
     id: league.league_key,
     name: league.league_name,
     seasons: [league.season],
@@ -366,6 +367,7 @@ export const getLeagues = async (): Promise<any[]> => {
   );
   const recentLeagues = allLeagues.filter(l => {
     const s = Number(l.seasons[0]);
+    if (s < MIN_SWITCH_LEAGUE_SEASON) return false;
     if (!(s === currentYear || s === currentYear - 1)) return false;
     // Hide current-year leagues where the draft hasn't happened yet
     if (s === currentYear && l.draftStatus === 'predraft') return false;
