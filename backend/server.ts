@@ -20,16 +20,15 @@ db.initializeDatabase();
 const app = express();
 const PORT = Number(process.env.PORT) || 3001;
 
-const CLIENT_ID = process.env.YAHOO_CLIENT_ID || 'dj0yJmk9dnRMc3llQWFTQkljJmQ9WVdrOVF6Y3diRVpEUjNjbWNHbzlNQT09JnM9Y29uc3VtZXJzZWNyZXQmc3Y9MCZ4PTA2';
-const CLIENT_SECRET = process.env.YAHOO_CLIENT_SECRET || '1105953219bf6b129a438e91cf792557eed39458';
+const CLIENT_ID = process.env.YAHOO_CLIENT_ID || '';
+const CLIENT_SECRET = process.env.YAHOO_CLIENT_SECRET || '';
 const REDIRECT_URI = process.env.REDIRECT_URI || 'https://nonexotically-nonphonetical-aidan.ngrok-free.dev';
 const CACHE_RECOVERY_CODE = process.env.CACHE_RECOVERY_CODE;
 const CACHE_RECOVERY_TTL_MS = 12 * 60 * 60 * 1000;
 
 // Log configuration on startup
 console.log('\n🔧 Configuration:');
-console.log('  CLIENT_ID:', CLIENT_ID ? CLIENT_ID.substring(0, 20) + '...' : 'NOT SET');
-console.log('  CLIENT_SECRET:', CLIENT_SECRET ? '***' + CLIENT_SECRET.substring(CLIENT_SECRET.length - 4) : 'NOT SET');
+console.log('  Yahoo OAuth credentials:', CLIENT_ID && CLIENT_SECRET ? 'configured' : 'not configured');
 console.log('  REDIRECT_URI:', REDIRECT_URI);
 console.log('  PORT:', PORT);
 console.log('');
