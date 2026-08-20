@@ -273,6 +273,7 @@ export function getCachedLeagues(): Array<{
       keeper_cost_rule, draft_board_order
     FROM leagues
     WHERE league_key IN (SELECT DISTINCT league_key FROM teams)
+      AND CAST(season AS INTEGER) >= 2025
     ORDER BY CAST(season AS INTEGER) DESC, league_name
   `).all() as any;
 }
