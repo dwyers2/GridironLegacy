@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Loader2, RotateCcw, Trash2, Users } from 'lucide-react';
+import { Loader2, RotateCcw, Star, Trash2, Users } from 'lucide-react';
 import { useIsMobile } from '../hooks/useIsMobile';
 import { DraftablePlayerOption, searchDraftablePlayers } from '../services/yahooService';
 import { DraftPick, ManagerKeepers, RosterPosition } from '../types';
@@ -38,6 +38,7 @@ interface BoardCellValue {
   nflTeam?: string;
   isKeeperPick?: boolean;
   keeperCost?: number;
+  keeperStars?: number;
 }
 
 type BoardState = Record<string, BoardCellValue>;
@@ -124,6 +125,7 @@ export default function NewDraftBoard({
           nflTeam: keeper.nflTeam,
           isKeeperPick: true,
           keeperCost: keeper.keeperCost,
+          keeperStars: Math.min(2, Math.max(1, keeper.consecutiveYears || 1)),
         };
       }
     }
@@ -327,20 +329,17 @@ export default function NewDraftBoard({
 
             {/* Keeper badge — pushed to right */}
             {isKeeper && !tradedTo && (
-              <span style={{
+              <span aria-label="Keeper" style={{
                 marginLeft: 'auto',
-                fontFamily: "'Barlow Condensed', sans-serif",
-                fontWeight: 700,
-                fontSize: '0.5rem',
-                letterSpacing: '0.14em',
-                textTransform: 'uppercase',
-                padding: '0.07rem 0.28rem',
-                borderRadius: '2px',
                 color: 'var(--gold)',
-                background: 'rgba(212,160,23,0.16)',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '1px',
                 flexShrink: 0,
               }}>
-                K
+                {Array.from({ length: value?.keeperStars ?? 1 }, (_, i) => (
+                  <Star key={i} size={10} fill="currentColor" strokeWidth={1.5} />
+                ))}
               </span>
             )}
 
