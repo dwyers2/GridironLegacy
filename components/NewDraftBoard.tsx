@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Loader2, RotateCcw, Trash2, Users } from 'lucide-react';
+import { Loader2, RotateCcw, Star, Trash2, Users } from 'lucide-react';
 import { useIsMobile } from '../hooks/useIsMobile';
 import { DraftablePlayerOption, searchDraftablePlayers } from '../services/yahooService';
 import { DraftPick, ManagerKeepers, RosterPosition } from '../types';
@@ -38,6 +38,7 @@ interface BoardCellValue {
   nflTeam?: string;
   isKeeperPick?: boolean;
   keeperCost?: number;
+  keeperYears?: number;
 }
 
 type BoardState = Record<string, BoardCellValue>;
@@ -124,6 +125,7 @@ export default function NewDraftBoard({
           nflTeam: keeper.nflTeam,
           isKeeperPick: true,
           keeperCost: keeper.keeperCost,
+          keeperYears: Math.min(2, Math.max(1, keeper.consecutiveYears || 1)),
         };
       }
     }
@@ -246,6 +248,7 @@ export default function NewDraftBoard({
     const colors = pos ? POS_COLORS[pos] : null;
     const isFilled = !!value?.playerName;
     const isKeeper = !!value?.isKeeperPick;
+    const keeperStarCount = Math.min(2, Math.max(1, value?.keeperYears ?? 1));
     const tradedTo = tradedPicks[key] ?? null;
     const pickNum = getPickNum(round, teamIndex);
     const showDropdown = isActive &&
@@ -340,7 +343,9 @@ export default function NewDraftBoard({
                 background: 'rgba(212,160,23,0.16)',
                 flexShrink: 0,
               }}>
-                K
+                {Array.from({ length: keeperStarCount }, (_, index) => (
+                  <Star key={index} size={8} style={{ fill: 'currentColor' }} />
+                ))}
               </span>
             )}
 
@@ -744,6 +749,10 @@ export default function NewDraftBoard({
                 borderRight: '1px solid var(--border)',
                 textAlign: 'left',
                 verticalAlign: 'bottom',
+                position: 'sticky',
+                left: 0,
+                zIndex: 5,
+                background: 'var(--surface-2)',
               }}>
                 <span style={{
                   fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700,
@@ -792,6 +801,9 @@ export default function NewDraftBoard({
                   background: 'var(--surface-2)',
                   borderRight: '1px solid var(--border)',
                   borderBottom: '1px solid rgba(255,255,255,0.03)',
+                  position: 'sticky',
+                  left: 0,
+                  zIndex: 2,
                 }}>
                   <div style={{
                     fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700,
