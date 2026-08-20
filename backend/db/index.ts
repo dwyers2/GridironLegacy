@@ -68,6 +68,15 @@ export function initializeDatabase() {
   if (!leagueColumns.includes('lock_past_seasons')) {
     db.exec('ALTER TABLE leagues ADD COLUMN lock_past_seasons INTEGER DEFAULT 1');
   }
+  if (!leagueColumns.includes('waiver_keeper_round')) {
+    db.exec('ALTER TABLE leagues ADD COLUMN waiver_keeper_round INTEGER DEFAULT NULL');
+  }
+  if (!leagueColumns.includes('keeper_cost_rule')) {
+    db.exec("ALTER TABLE leagues ADD COLUMN keeper_cost_rule TEXT DEFAULT 'round_minus_1'");
+  }
+  if (!leagueColumns.includes('draft_board_order')) {
+    db.exec('ALTER TABLE leagues ADD COLUMN draft_board_order TEXT DEFAULT NULL');
+  }
 
   // Migration: add cost and manager_name columns to draft_picks
   const draftPickColumns = (db.pragma('table_info(draft_picks)') as any[]).map((c: any) => c.name);
@@ -96,6 +105,17 @@ export function initializeDatabase() {
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
     CREATE INDEX IF NOT EXISTS idx_keeper_log_league ON keeper_log(league_key);
+  `);
+
+  // Roster position slots (from Yahoo league settings, per league key)
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS roster_positions (
+      league_key TEXT NOT NULL,
+      position TEXT NOT NULL,
+      count INTEGER NOT NULL DEFAULT 1,
+      is_starting INTEGER NOT NULL DEFAULT 1,
+      PRIMARY KEY (league_key, position)
+    );
   `);
 
   // FantasyCalc dynasty rankings cache
@@ -155,6 +175,46 @@ export function setLockPastSeasons(leagueKey: string, value: boolean) {
   db.prepare('UPDATE leagues SET lock_past_seasons = ? WHERE league_key = ?').run(value ? 1 : 0, leagueKey);
 }
 
+export function getWaiverKeeperRound(leagueKey: string): number | null {
+  const row = db.prepare('SELECT waiver_keeper_round FROM leagues WHERE league_key = ?').get(leagueKey) as any;
+  if (!row || row.waiver_keeper_round === null || row.waiver_keeper_round === undefined) return null;
+  return row.waiver_keeper_round as number;
+}
+
+export function setWaiverKeeperRound(leagueKey: string, value: number | null) {
+  db.prepare('UPDATE leagues SET waiver_keeper_round = ? WHERE league_key = ?').run(value, leagueKey);
+}
+
+export type KeeperCostRule = 'round_minus_1' | 'round' | 'na';
+
+export function getKeeperCostRule(leagueKey: string): KeeperCostRule {
+  const row = db.prepare('SELECT keeper_cost_rule FROM leagues WHERE league_key = ?').get(leagueKey) as any;
+  const val = row?.keeper_cost_rule;
+  if (val === 'round' || val === 'na') return val;
+  return 'round_minus_1';
+}
+
+export function setKeeperCostRule(leagueKey: string, value: KeeperCostRule) {
+  db.prepare('UPDATE leagues SET keeper_cost_rule = ? WHERE league_key = ?').run(value, leagueKey);
+}
+
+export function getDraftBoardOrder(leagueKey: string): string[] | null {
+  const row = db.prepare('SELECT draft_board_order FROM leagues WHERE league_key = ?').get(leagueKey) as any;
+  const raw = row?.draft_board_order;
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed.filter((value): value is string => typeof value === 'string') : null;
+  } catch {
+    return null;
+  }
+}
+
+export function setDraftBoardOrder(leagueKey: string, value: string[] | null) {
+  const serialized = value && value.length > 0 ? JSON.stringify(value) : null;
+  db.prepare('UPDATE leagues SET draft_board_order = ? WHERE league_key = ?').run(serialized, leagueKey);
+}
+
 export function logKeeperAction(entry: {
   leagueKey: string;
   season: string;
@@ -192,6 +252,55 @@ export function cacheLeague(leagueKey: string, leagueName: string, season: strin
     VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
   `);
   stmt.run(leagueKey, leagueName, season, gameId);
+}
+
+export function getCachedLeagues(): Array<{
+  league_key: string;
+  league_name: string;
+  season: string;
+  game_id: string;
+  is_keeper_league: number | null;
+  max_keepers: number | null;
+  max_years_kept: number | null;
+  lock_past_seasons: number | null;
+  waiver_keeper_round: number | null;
+  keeper_cost_rule: string | null;
+  draft_board_order: string | null;
+}> {
+  return db.prepare(`
+    SELECT league_key, league_name, season, game_id, is_keeper_league,
+      max_keepers, max_years_kept, lock_past_seasons, waiver_keeper_round,
+      keeper_cost_rule, draft_board_order
+    FROM leagues
+    WHERE league_key IN (SELECT DISTINCT league_key FROM teams)
+    ORDER BY CAST(season AS INTEGER) DESC, league_name
+  `).all() as any;
+}
+
+export interface FutureDraftPickTrade {
+  draftSeason: string;
+  round: number;
+  fromTeamKey: string;
+  toTeamKey: string;
+}
+
+export function getFutureDraftPickTrades(leagueKey: string): FutureDraftPickTrade[] {
+  const row = db.prepare('SELECT value FROM cache_metadata WHERE key = ?').get(`future_pick_trades:${leagueKey}`) as { value: string } | undefined;
+  if (!row?.value) return [];
+  try {
+    const parsed = JSON.parse(row.value);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+export function setFutureDraftPickTrades(leagueKey: string, trades: FutureDraftPickTrade[]) {
+  db.prepare(`
+    INSERT INTO cache_metadata (key, value, last_updated)
+    VALUES (?, ?, CURRENT_TIMESTAMP)
+    ON CONFLICT(key) DO UPDATE SET value = excluded.value, last_updated = CURRENT_TIMESTAMP
+  `).run(`future_pick_trades:${leagueKey}`, JSON.stringify(trades));
 }
 
 // Cache a team
@@ -661,6 +770,27 @@ export function resolvePlayersByKeys(playerKeys: string[]): Array<{
   });
 }
 
+// Cache roster position slots for a league season
+export function cacheRosterPositions(leagueKey: string, positions: Array<{ position: string; count: number; isStarting: boolean }>) {
+  if (positions.length === 0) return;
+  const stmt = db.prepare(`
+    INSERT OR REPLACE INTO roster_positions (league_key, position, count, is_starting)
+    VALUES (?, ?, ?, ?)
+  `);
+  const transaction = db.transaction(() => {
+    for (const rp of positions) {
+      stmt.run(leagueKey, rp.position, rp.count, rp.isStarting ? 1 : 0);
+    }
+  });
+  transaction();
+}
+
+export function getRosterPositions(leagueKey: string): Array<{ position: string; count: number; isStarting: boolean }> | null {
+  const rows = db.prepare('SELECT position, count, is_starting FROM roster_positions WHERE league_key = ?').all(leagueKey) as any[];
+  if (rows.length === 0) return null;
+  return rows.map(r => ({ position: r.position as string, count: r.count as number, isStarting: r.is_starting === 1 }));
+}
+
 // Cache traded pick info for a league (which picks were acquired via trade)
 export function cacheDraftPickTrades(leagueKey: string, trades: Array<{ pick: number; originalTeamKey: string }>) {
   if (trades.length === 0) return;
@@ -809,6 +939,7 @@ export function getManualKeepersForLeague(leagueKey: string): Array<{
 export function getKeeperSummaryForChain(chainLeagueKeys: string[]): Array<{
   league_key: string;
   season: string;
+  pick: number;
   player_key: string;
   player_name: string;
   position: string;
@@ -821,7 +952,7 @@ export function getKeeperSummaryForChain(chainLeagueKeys: string[]): Array<{
   if (chainLeagueKeys.length === 0) return [];
   const placeholders = chainLeagueKeys.map(() => '?').join(', ');
   return db.prepare(`
-    SELECT kd.league_key, dp.season, dp.player_key, dp.player_name, dp.position, dp.nfl_team,
+    SELECT kd.league_key, kd.pick, dp.season, dp.player_key, dp.player_name, dp.position, dp.nfl_team,
            dp.round,
            COALESCE(final_owner.team_key, dp.team_key) as team_key,
            COALESCE(t_owner.manager_name, t_draft.manager_name, dp.team_key) as manager_name,

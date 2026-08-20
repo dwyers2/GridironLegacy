@@ -12,6 +12,12 @@ export interface League {
   maxYearsKept?: number | null;
   /** Whether past seasons are locked from keeper edits (default true) */
   lockPastSeasons?: boolean;
+  /** Round a waiver/FA pickup costs when kept; null = use default (9) */
+  waiverKeeperRound?: number | null;
+  /** How keeper cost is computed: round-1 (default), same round, or not tracked */
+  keeperCostRule?: 'round_minus_1' | 'round' | 'na';
+  /** Preferred manager order for the manual new-draft board */
+  draftBoardOrder?: string[] | null;
 }
 
 export interface PlayerStats {
@@ -99,6 +105,12 @@ export interface DraftPick {
   isKeeper?: boolean;
 }
 
+export interface RosterPosition {
+  position: string;   // "QB", "WR", "RB", "TE", "W/R/T", "K", "DEF", "D/ST", "BN", "IR", etc.
+  count: number;
+  isStarting: boolean;
+}
+
 export interface SeasonDraftData {
   season: string;
   leagueKey: string;
@@ -107,6 +119,8 @@ export interface SeasonDraftData {
   teams: Array<{ teamKey: string; managerName: string; draftSlot: number }>;
   /** True for auction-format drafts */
   isAuction?: boolean;
+  /** Roster position slots for this season (from Yahoo league settings) */
+  rosterPositions?: RosterPosition[];
 }
 
 export interface KeeperEntry {
@@ -118,6 +132,8 @@ export interface KeeperEntry {
   keeperCost: number;
   consecutiveYears: number;
   isManual?: boolean;
+  /** Overall pick number in the draft — present for non-manual keepers */
+  pick?: number;
 }
 
 export interface ManagerKeepers {

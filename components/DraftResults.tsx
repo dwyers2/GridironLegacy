@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { SeasonDraftData, DraftPick } from '../types';
+import { SeasonDraftData, DraftPick, RosterPosition } from '../types';
 import { ChevronDown, ChevronRight, Loader2, ClipboardList, Star, Lock } from 'lucide-react';
 import { useIsMobile } from '../hooks/useIsMobile';
 import { getAccessToken } from '../services/yahooService';
+import DraftByPositionView from './DraftByPositionView';
 
 const BACKEND_URL = '/api';
 
@@ -38,6 +39,7 @@ interface DraftGridProps {
   maxYearsKept?: number | null;
   playerYearsKept?: Record<string, number>;
   isLocked?: boolean;
+  rosterPositions?: RosterPosition[];
 }
 
 function AuctionDraftView({ season }: { season: SeasonDraftData }) {
@@ -231,8 +233,9 @@ function DraftGridMobile({ season, keeperPicks, onToggleKeeper, maxKeepers, maxY
   );
 }
 
-function DraftGrid({ season, keeperPicks, onToggleKeeper, maxKeepers, maxYearsKept, playerYearsKept, isLocked }: DraftGridProps) {
+function DraftGrid({ season, keeperPicks, onToggleKeeper, maxKeepers, maxYearsKept, playerYearsKept, isLocked, rosterPositions }: DraftGridProps) {
   const isMobile = useIsMobile();
+  const [viewMode, setViewMode] = useState<'round' | 'position'>('round');
   const { picks, teams } = season;
   if (picks.length === 0) return (
     <p style={{ color: 'var(--text-secondary)', fontStyle: 'italic', padding: '1.5rem', fontFamily: "'Outfit', sans-serif", margin: 0 }}>
@@ -240,7 +243,55 @@ function DraftGrid({ season, keeperPicks, onToggleKeeper, maxKeepers, maxYearsKe
     </p>
   );
   if (season.isAuction) return <AuctionDraftView season={season} />;
-  if (isMobile) return <DraftGridMobile season={season} keeperPicks={keeperPicks} onToggleKeeper={onToggleKeeper} maxKeepers={maxKeepers} maxYearsKept={maxYearsKept} playerYearsKept={playerYearsKept} isLocked={isLocked} />;
+
+  const viewToggle = (
+    <div style={{ display: 'flex', background: 'var(--surface-2)', border: '1px solid var(--border)', borderRadius: '6px', padding: '0.15rem', marginBottom: '0.75rem', width: 'fit-content' }}>
+      {(['round', 'position'] as const).map(mode => (
+        <button
+          key={mode}
+          onClick={() => setViewMode(mode)}
+          style={{
+            padding: '0.28rem 0.65rem',
+            borderRadius: '4px', border: 'none',
+            background: viewMode === mode ? 'rgba(212,160,23,0.18)' : 'transparent',
+            color: viewMode === mode ? 'var(--gold)' : 'var(--text-muted)',
+            fontFamily: "'Barlow Condensed', sans-serif",
+            fontWeight: 700, fontSize: '0.6rem', letterSpacing: '0.1em', textTransform: 'uppercase',
+            cursor: 'pointer', transition: 'background 0.1s, color 0.1s',
+          }}
+        >
+          {mode === 'round' ? 'By Round' : 'By Position'}
+        </button>
+      ))}
+    </div>
+  );
+
+  if (viewMode === 'position') {
+    const posPicks = picks.map(p => ({
+      teamKey: p.teamKey,
+      playerName: p.playerName,
+      position: p.position,
+      round: p.round,
+      isKeeper: keeperPicks.has(p.pick),
+      pickNum: p.pick,
+      seasonPoints: p.seasonPoints,
+    }));
+    return (
+      <div>
+        {viewToggle}
+        <DraftByPositionView
+          teams={teams}
+          picks={posPicks}
+          onToggleKeeper={!isLocked ? onToggleKeeper : undefined}
+          keeperPicks={keeperPicks}
+          isLocked={isLocked}
+          rosterPositions={rosterPositions}
+        />
+      </div>
+    );
+  }
+
+  if (isMobile) return <>{viewToggle}<DraftGridMobile season={season} keeperPicks={keeperPicks} onToggleKeeper={onToggleKeeper} maxKeepers={maxKeepers} maxYearsKept={maxYearsKept} playerYearsKept={playerYearsKept} isLocked={isLocked} /></>;
 
   const numTeams = teams.length;
   const maxRound = Math.max(...picks.map(p => p.round));
@@ -286,6 +337,8 @@ function DraftGrid({ season, keeperPicks, onToggleKeeper, maxKeepers, maxYearsKe
   );
 
   return (
+    <div>
+      {viewToggle}
     <div style={{ overflowX: 'auto' }}>
       <table style={{ width: '100%', textAlign: 'left', borderCollapse: 'collapse', fontSize: '0.8rem', minWidth: 'max-content' }}>
         <thead>
@@ -334,6 +387,7 @@ function DraftGrid({ season, keeperPicks, onToggleKeeper, maxKeepers, maxYearsKe
               {row.map((pick, slotIdx) => {
                 const homeTeam = sortedTeams[slotIdx];
                 const isForeignPick = pick !== null && pick.teamKey !== homeTeam.teamKey;
+                const isTradedPick = pick !== null && !!pick.originalManagerName && pick.originalManagerName !== pick.managerName;
                 const isKeeper = pick !== null && keeperPicks.has(pick.pick);
                 // Per-team limit: count keepers for the team that owns this pick
                 const ownerTeamKey = pick?.teamKey;
@@ -373,12 +427,12 @@ function DraftGrid({ season, keeperPicks, onToggleKeeper, maxKeepers, maxYearsKe
                               : 'transparent',
                           transition: 'border-color 0.15s, background 0.15s',
                         }}
-                        className={isForeignPick ? 'group/foreignpick' : ''}
+                        className={isForeignPick || isTradedPick ? 'group/foreignpick' : ''}
                         onClick={() => !isLocked && !blocked && onToggleKeeper(pick.pick)}
                         title={cellTitle}
                       >
                         {/* Hover tooltip for foreign (traded) picks */}
-                        {isForeignPick && (
+                        {(isForeignPick || isTradedPick) && (
                           <div style={{
                             position: 'absolute', zIndex: 50,
                             background: 'var(--surface-2)',
@@ -389,13 +443,13 @@ function DraftGrid({ season, keeperPicks, onToggleKeeper, maxKeepers, maxYearsKe
                             boxShadow: '0 4px 16px rgba(0,0,0,0.5)',
                             pointerEvents: 'none',
                           }} className="hidden group-hover/foreignpick:block">
-                            <span style={{ color: 'var(--text-secondary)' }}>Drafted by </span>
-                            <span style={{ color: '#818cf8', fontWeight: 700 }}>{pick.managerName}</span>
+                            <span style={{ color: 'var(--text-secondary)' }}>{isTradedPick ? 'Originally belonged to ' : 'Drafted by '}</span>
+                            <span style={{ color: '#818cf8', fontWeight: 700 }}>{isTradedPick ? pick.originalManagerName : pick.managerName}</span>
                           </div>
                         )}
 
                         {/* Foreign pick manager label */}
-                        {isForeignPick && (
+                        {(isForeignPick || isTradedPick) && (
                           <span style={{
                             fontSize: '0.55rem', color: '#818cf8',
                             fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.1em',
@@ -465,6 +519,7 @@ function DraftGrid({ season, keeperPicks, onToggleKeeper, maxKeepers, maxYearsKe
           ))}
         </tbody>
       </table>
+    </div>
     </div>
   );
 }
@@ -742,6 +797,7 @@ export default function DraftResults({ draftSeasons, loading, isKeeperLeague = t
                   maxYearsKept={isKeeperLeague ? maxYearsKept : null}
                   playerYearsKept={isKeeperLeague ? playerYearsKept : undefined}
                   isLocked={isLocked}
+                  rosterPositions={season.rosterPositions}
                 />
               </div>
             )}

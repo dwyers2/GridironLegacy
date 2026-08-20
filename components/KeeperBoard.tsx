@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { KeeperSummary, KeeperEntry } from '../types';
+import React, { useState } from 'react';
+import { KeeperSummary, KeeperEntry, RosterPlayer, TeamRoster } from '../types';
 import { Loader2, Star, Shield, Plus, X } from 'lucide-react';
 import { useIsMobile } from '../hooks/useIsMobile';
 
@@ -10,6 +10,7 @@ interface Props {
   onRefresh: () => void;
   maxKeepers?: number | null;
   maxYearsKept?: number | null;
+  currentRosters?: TeamRoster[];
 }
 
 const BACKEND = '/api';
@@ -56,95 +57,6 @@ interface PlayerResult {
   nfl_team: string;
 }
 
-function PlayerSearchInput({ onSelect, onCancel }: {
-  onSelect: (p: PlayerResult) => void;
-  onCancel: () => void;
-}) {
-  const [query, setQuery] = useState('');
-  const [results, setResults] = useState<PlayerResult[]>([]);
-  const [activeIndex, setActiveIndex] = useState(-1);
-  const inputRef = useRef<HTMLInputElement>(null);
-  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  useEffect(() => { inputRef.current?.focus(); }, []);
-
-  useEffect(() => {
-    if (timerRef.current) clearTimeout(timerRef.current);
-    if (query.length < 2) { setResults([]); return; }
-    timerRef.current = setTimeout(async () => {
-      try {
-        const res = await fetch(`${BACKEND}/players/search?q=${encodeURIComponent(query)}`);
-        const data = await res.json();
-        setResults(data.players || []);
-        setActiveIndex(-1);
-      } catch { setResults([]); }
-    }, 250);
-    return () => { if (timerRef.current) clearTimeout(timerRef.current); };
-  }, [query]);
-
-  const handleKey = (e: React.KeyboardEvent) => {
-    if (e.key === 'Escape') { onCancel(); return; }
-    if (e.key === 'ArrowDown') { e.preventDefault(); setActiveIndex(i => Math.min(i + 1, results.length - 1)); return; }
-    if (e.key === 'ArrowUp') { e.preventDefault(); setActiveIndex(i => Math.max(i - 1, 0)); return; }
-    if (e.key === 'Enter' && activeIndex >= 0) { onSelect(results[activeIndex]); return; }
-  };
-
-  return (
-    <div style={{ position: 'relative' }}>
-      <input
-        ref={inputRef}
-        value={query}
-        onChange={e => setQuery(e.target.value)}
-        onKeyDown={handleKey}
-        placeholder="Search player..."
-        style={{
-          width: '100%', boxSizing: 'border-box',
-          background: 'var(--surface-2)', color: 'var(--text-primary)',
-          border: '1px solid rgba(212,160,23,0.35)', borderRadius: '5px',
-          padding: '0.35rem 0.6rem', fontSize: '0.78rem',
-          fontFamily: "'Outfit', sans-serif", outline: 'none',
-        }}
-      />
-      {results.length > 0 && (
-        <div style={{
-          position: 'absolute', top: 'calc(100% + 4px)', left: 0, right: 0, zIndex: 100,
-          background: 'var(--surface)', border: '1px solid var(--border)',
-          borderRadius: '6px', overflow: 'hidden',
-          boxShadow: '0 8px 24px rgba(0,0,0,0.4)',
-        }}>
-          {results.map((p, i) => (
-            <div
-              key={p.player_key + i}
-              onMouseDown={() => onSelect(p)}
-              style={{
-                display: 'flex', alignItems: 'center', gap: '0.5rem',
-                padding: '0.45rem 0.7rem', cursor: 'pointer',
-                background: i === activeIndex ? 'rgba(212,160,23,0.1)' : 'transparent',
-                borderBottom: i < results.length - 1 ? '1px solid var(--border-muted)' : 'none',
-              }}
-            >
-              <span style={{
-                fontSize: '0.55rem', fontWeight: 700, padding: '0.1rem 0.35rem',
-                borderRadius: '3px', flexShrink: 0,
-                ...posStyle(p.position),
-              }}>
-                {p.position || '—'}
-              </span>
-              <span style={{ flex: 1, fontSize: '0.78rem', color: 'var(--text-primary)', fontFamily: "'Outfit', sans-serif" }}>
-                {p.player_name}
-              </span>
-              {p.nfl_team && (
-                <span style={{ fontSize: '0.6rem', color: 'var(--text-muted)', fontFamily: 'monospace' }}>
-                  {p.nfl_team}
-                </span>
-              )}
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
 
 const KeeperRow: React.FC<{ keeper: KeeperEntry; onRemove?: () => void; maxYearsKept?: number | null }> = ({ keeper, onRemove, maxYearsKept }) => {
   const atYearsLimit = maxYearsKept != null && keeper.consecutiveYears >= maxYearsKept;
@@ -194,19 +106,7 @@ const KeeperRow: React.FC<{ keeper: KeeperEntry; onRemove?: () => void; maxYears
         </span>
       )}
 
-      {keeper.isManual ? (
-        <span style={{
-          fontSize: '0.6rem', fontWeight: 700,
-          padding: '0.15rem 0.5rem', borderRadius: '3px',
-          background: 'rgba(100,116,139,0.1)',
-          border: '1px solid rgba(100,116,139,0.3)',
-          color: 'var(--text-muted)',
-          fontFamily: "'Barlow Condensed', sans-serif", letterSpacing: '0.1em',
-          flexShrink: 0,
-        }}>
-          MANUAL
-        </span>
-      ) : (
+      {keeper.keeperCost > 0 ? (
         <span style={{
           fontSize: '0.6rem', fontWeight: 700,
           padding: '0.15rem 0.5rem', borderRadius: '3px',
@@ -218,7 +118,19 @@ const KeeperRow: React.FC<{ keeper: KeeperEntry; onRemove?: () => void; maxYears
         }}>
           RD {keeper.keeperCost}
         </span>
-      )}
+      ) : keeper.isManual ? (
+        <span style={{
+          fontSize: '0.6rem', fontWeight: 700,
+          padding: '0.15rem 0.5rem', borderRadius: '3px',
+          background: 'rgba(100,116,139,0.1)',
+          border: '1px solid rgba(100,116,139,0.3)',
+          color: 'var(--text-muted)',
+          fontFamily: "'Barlow Condensed', sans-serif", letterSpacing: '0.1em',
+          flexShrink: 0,
+        }}>
+          MANUAL
+        </span>
+      ) : null}
 
       {onRemove && (
         <button
@@ -226,12 +138,12 @@ const KeeperRow: React.FC<{ keeper: KeeperEntry; onRemove?: () => void; maxYears
           title="Remove keeper"
           style={{
             background: 'none', border: 'none', cursor: 'pointer',
-            color: 'var(--text-muted)', padding: '0.1rem', lineHeight: 1,
+            color: '#F87171', padding: '0.1rem', lineHeight: 1,
             display: 'flex', alignItems: 'center', flexShrink: 0,
-            opacity: 0.6,
+            opacity: 0.5,
           }}
           onMouseEnter={e => (e.currentTarget.style.opacity = '1')}
-          onMouseLeave={e => (e.currentTarget.style.opacity = '0.6')}
+          onMouseLeave={e => (e.currentTarget.style.opacity = '0.5')}
         >
           <X size={13} />
         </button>
@@ -248,9 +160,26 @@ const ManagerCard: React.FC<{
   onRefresh: () => void;
   maxKeepers?: number | null;
   maxYearsKept?: number | null;
-}> = ({ teamKey, managerName, keepers, leagueKey, onRefresh, maxKeepers, maxYearsKept }) => {
+  rosterPlayers?: RosterPlayer[];
+  keptTimesMap?: Map<string, number>;
+}> = ({ teamKey, managerName, keepers, leagueKey, onRefresh, maxKeepers, maxYearsKept, rosterPlayers, keptTimesMap }) => {
   const [isAdding, setIsAdding] = useState(false);
   const atLimit = maxKeepers != null && keepers.length >= maxKeepers;
+
+  // Players already kept (by playerKey or playerName) — exclude from the select list
+  const keptKeys = new Set(keepers.map(k => k.playerKey).filter(Boolean));
+  const keptNames = new Set(keepers.map(k => k.playerName));
+  const availablePlayers = (rosterPlayers ?? []).filter(p => {
+    if (keptKeys.has(p.playerKey) || keptNames.has(p.playerName)) return false;
+    // Exclude players the backend flagged as ineligible (wrong draft round, post-deadline pickup, etc.)
+    if (p.isKeeperIneligible) return false;
+    // Runtime max-years check — catches setting changes made after the roster cache was built
+    if (maxYearsKept != null && (keptTimesMap?.get(p.playerName) ?? 0) >= maxYearsKept) return false;
+    return true;
+  }).sort((a, b) => {
+    const posOrder: Record<string, number> = { QB: 0, RB: 1, WR: 2, TE: 3, K: 4, DEF: 5 };
+    return (posOrder[a.position] ?? 9) - (posOrder[b.position] ?? 9) || a.playerName.localeCompare(b.playerName);
+  });
 
   const handleSelect = async (p: PlayerResult) => {
     setIsAdding(false);
@@ -327,7 +256,18 @@ const ManagerCard: React.FC<{
             <KeeperRow
               key={k.playerKey + k.playerName + i}
               keeper={k}
-              onRemove={k.isManual ? () => handleRemove(k) : undefined}
+              onRemove={k.isManual
+                ? () => handleRemove(k)
+                : k.pick != null
+                  ? async () => {
+                      await fetch(`${BACKEND}/keepers/toggle`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ leagueKey, pick: k.pick }),
+                      });
+                      onRefresh();
+                    }
+                  : undefined}
               maxYearsKept={maxYearsKept}
             />
           ))
@@ -341,10 +281,59 @@ const ManagerCard: React.FC<{
         position: 'relative',
       }}>
         {isAdding ? (
-          <PlayerSearchInput
-            onSelect={handleSelect}
-            onCancel={() => setIsAdding(false)}
-          />
+          <div style={{ position: 'relative' }}>
+            {availablePlayers.length === 0 ? (
+              <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontFamily: "'Outfit', sans-serif", fontStyle: 'italic', padding: '0.4rem 0' }}>
+                No roster players available
+              </div>
+            ) : (
+              <div style={{
+                border: '1px solid rgba(212,160,23,0.35)', borderRadius: '6px', overflow: 'hidden',
+                background: 'var(--surface)', boxShadow: '0 8px 24px rgba(0,0,0,0.4)',
+                maxHeight: '220px', overflowY: 'auto',
+              }}>
+                {availablePlayers.map((p, i) => (
+                  <div
+                    key={p.playerKey + i}
+                    onMouseDown={() => {
+                      handleSelect({
+                        player_key: p.playerKey,
+                        player_name: p.playerName,
+                        position: p.position,
+                        nfl_team: p.nflTeam,
+                      });
+                      setIsAdding(false);
+                    }}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: '0.5rem',
+                      padding: '0.45rem 0.7rem', cursor: 'pointer',
+                      borderBottom: i < availablePlayers.length - 1 ? '1px solid var(--border-muted)' : 'none',
+                    }}
+                    onMouseEnter={e => (e.currentTarget.style.background = 'rgba(212,160,23,0.08)')}
+                    onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
+                  >
+                    <span style={{ fontSize: '0.55rem', fontWeight: 700, padding: '0.1rem 0.35rem', borderRadius: '3px', flexShrink: 0, ...posStyle(p.position) }}>
+                      {p.position || '—'}
+                    </span>
+                    <span style={{ flex: 1, fontSize: '0.78rem', color: 'var(--text-primary)', fontFamily: "'Outfit', sans-serif" }}>
+                      {p.playerName}
+                    </span>
+                    {p.nflTeam && (
+                      <span style={{ fontSize: '0.6rem', color: 'var(--text-muted)', fontFamily: 'monospace' }}>
+                        {p.nflTeam}
+                      </span>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+            <button
+              onMouseDown={() => setIsAdding(false)}
+              style={{ marginTop: '0.4rem', background: 'none', border: 'none', cursor: 'pointer', fontSize: '0.65rem', color: 'var(--text-muted)', fontFamily: "'Outfit', sans-serif", padding: 0 }}
+            >
+              Cancel
+            </button>
+          </div>
         ) : atLimit ? (
           <div style={{
             display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.3rem',
@@ -388,8 +377,13 @@ const ManagerCard: React.FC<{
   );
 }
 
-export default function KeeperBoard({ summary, loading, leagueKey, onRefresh, maxKeepers, maxYearsKept }: Props) {
+export default function KeeperBoard({ summary, loading, leagueKey, onRefresh, maxKeepers, maxYearsKept, currentRosters }: Props) {
   const isMobile = useIsMobile();
+  // Map of playerName → consecutive years kept (from prior seasons), used to enforce maxYearsKept
+  // at render time so setting changes take effect without clearing the roster cache
+  const keptTimesMap = new Map<string, number>(
+    (summary?.keptIntoCurrentSeason ?? []).map(k => [k.playerName, k.timesKept])
+  );
   if (loading) {
     return (
       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '6rem 2rem', gap: '1rem' }}>
@@ -475,6 +469,8 @@ export default function KeeperBoard({ summary, loading, leagueKey, onRefresh, ma
             onRefresh={onRefresh}
             maxKeepers={maxKeepers}
             maxYearsKept={maxYearsKept}
+            rosterPlayers={currentRosters?.find(r => r.teamKey === m.teamKey)?.players}
+            keptTimesMap={keptTimesMap}
           />
         ))}
       </div>

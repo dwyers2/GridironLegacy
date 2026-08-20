@@ -2,6 +2,46 @@ import { League, PlayerStats, ManagerHistory, SeasonRosterData, TeamInfo, Manage
 
 const BACKEND_URL = '/api';
 
+export const isRecoveryMode = (): boolean => Boolean(localStorage.getItem('cached_recovery_token'));
+
+export const recoverCachedAccess = async (code: string): Promise<any[]> => {
+  const accessRes = await fetch(`${BACKEND_URL}/recovery/access`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ code }),
+  });
+  const accessData = await accessRes.json();
+  if (!accessRes.ok) throw new Error(accessData.error || 'Cached recovery failed');
+  localStorage.setItem('cached_recovery_token', accessData.token);
+
+  const leaguesRes = await fetch(`${BACKEND_URL}/recovery/leagues`, {
+    headers: { Authorization: `Bearer ${accessData.token}` },
+  });
+  const leaguesData = await leaguesRes.json();
+  if (!leaguesRes.ok) throw new Error(leaguesData.error || 'Could not load cached leagues');
+  return (leaguesData.leagues || []).map((league: any) => ({
+    id: league.league_key,
+    name: league.league_name,
+    seasons: [league.season],
+    gameId: league.game_id,
+    isKeeperLeague: league.is_keeper_league === null ? true : league.is_keeper_league === 1,
+    maxKeepers: league.max_keepers,
+    maxYearsKept: league.max_years_kept,
+    lockPastSeasons: league.lock_past_seasons !== 0,
+    waiverKeeperRound: league.waiver_keeper_round,
+    keeperCostRule: league.keeper_cost_rule || 'round_minus_1',
+    draftBoardOrder: league.draft_board_order ? JSON.parse(league.draft_board_order) : null,
+  }));
+};
+
+export interface DraftablePlayerOption {
+  playerKey: string;
+  playerName: string;
+  position: string;
+  nflTeam: string;
+  searchSource: 'yahoo' | 'cache';
+}
+
 // NFL Fantasy Football Game IDs by year (code: "nfl")
 // Note: Some IDs like 416 are "nfls" (Survivor), not regular fantasy
 const NFL_GAME_IDS: { [year: string]: string } = {
@@ -38,6 +78,36 @@ const buildLeagueKey = (baseLeagueId: string, year: string): string | null => {
   const gameId = NFL_GAME_IDS[year];
   if (!gameId) return null;
   return `${gameId}.l.${baseLeagueId}`;
+};
+
+const parseYahooPlayerCollectionEntry = (playerArr: any[]): DraftablePlayerOption | null => {
+  if (!Array.isArray(playerArr)) return null;
+
+  let playerInfo: any = {};
+  if (Array.isArray(playerArr[0])) {
+    playerArr[0].forEach((item: any) => {
+      if (item && typeof item === 'object' && !Array.isArray(item)) {
+        Object.assign(playerInfo, item);
+      }
+    });
+  } else if (playerArr[0] && typeof playerArr[0] === 'object') {
+    playerInfo = playerArr[0];
+  }
+
+  const playerKey = playerInfo.player_key || '';
+  const playerName = playerInfo.name?.full || playerInfo.name || '';
+  const position = playerInfo.display_position || playerInfo.position_type || '';
+  const nflTeam = playerInfo.editorial_team_abbr || '';
+
+  if (!playerKey || !playerName) return null;
+
+  return {
+    playerKey,
+    playerName,
+    position,
+    nflTeam,
+    searchSource: 'yahoo',
+  };
 };
 
 // 1️⃣ Get Yahoo OAuth URL
@@ -98,6 +168,11 @@ export const exchangeCodeForToken = async (code: string): Promise<{ access_token
 
 // 3️⃣ Get access token (with auto-refresh)
 export const getAccessToken = async (): Promise<string> => {
+  const cachedRecoveryToken = localStorage.getItem('cached_recovery_token');
+  if (cachedRecoveryToken) {
+    return cachedRecoveryToken;
+  }
+
   let token = localStorage.getItem('yahoo_access_token');
   const expiresAt = localStorage.getItem('yahoo_access_token_expires');
 
@@ -151,7 +226,7 @@ export const getLeagues = async (): Promise<any[]> => {
   // Correct Yahoo Fantasy API endpoint structure
   // Path: users;use_login=1/games;game_keys=nfl/leagues
   // This gets the current user's NFL leagues
-  const apiPath = 'users;use_login=1/games;game_codes=nfl/leagues';
+  const apiPath = 'users;use_login=1/games;game_keys=nfl/leagues';
   const url = `${BACKEND_URL}/yahoo/${apiPath}`;
 
   console.log('🔗 URL:', url);
@@ -172,12 +247,25 @@ export const getLeagues = async (): Promise<any[]> => {
       error: errorText
     });
 
+    let detailedMessage: string | null = null;
+
     // Try to parse as JSON
     try {
       const errorData = JSON.parse(errorText);
       console.error('Parsed error:', errorData);
+      const yahooDescription =
+        errorData?.yahoo_error?.error?.description ||
+        errorData?.yahoo_error?.error_description ||
+        errorData?.yahoo_error?.description;
+      if (res.status === 403 && yahooDescription) {
+        detailedMessage = `Yahoo rejected this app: ${yahooDescription}. Check the Yahoo Developer Console app permissions for Fantasy Sports read access, then re-authenticate.`;
+      }
     } catch (e) {
       console.error('Raw error:', errorText);
+    }
+
+    if (detailedMessage) {
+      throw new Error(detailedMessage);
     }
 
     throw new Error(`Failed to fetch leagues: ${res.status} ${res.statusText}`);
@@ -294,9 +382,17 @@ export const getLeagues = async (): Promise<any[]> => {
       try {
         const settingsRes = await fetch(`${BACKEND_URL}/league-settings/${encodeURIComponent(league.id)}`);
         if (!settingsRes.ok) return league;
-        const { isKeeperLeague, maxKeepers, maxYearsKept, lockPastSeasons } = await settingsRes.json();
-        // null means never been set — default false
-        return { ...league, isKeeperLeague: isKeeperLeague === true, maxKeepers: maxKeepers ?? null, maxYearsKept: maxYearsKept ?? null, lockPastSeasons: lockPastSeasons !== false };
+        const { isKeeperLeague, maxKeepers, maxYearsKept, lockPastSeasons, waiverKeeperRound, keeperCostRule, draftBoardOrder } = await settingsRes.json();
+        return {
+          ...league,
+          isKeeperLeague: isKeeperLeague === true,
+          maxKeepers: maxKeepers ?? null,
+          maxYearsKept: maxYearsKept ?? null,
+          lockPastSeasons: lockPastSeasons !== false,
+          waiverKeeperRound: waiverKeeperRound ?? null,
+          keeperCostRule: keeperCostRule ?? 'round_minus_1',
+          draftBoardOrder: Array.isArray(draftBoardOrder) ? draftBoardOrder : null,
+        };
       } catch (e) {
         return league;
       }
@@ -447,6 +543,57 @@ export const getPlayerHistory = async (leagueId: string): Promise<any[]> => {
 
   console.log('📊 Found', players.length, 'players');
   return players;
+};
+
+export const searchDraftablePlayers = async (
+  leagueId: string,
+  query: string,
+  limit = 12
+): Promise<DraftablePlayerOption[]> => {
+  const trimmed = query.trim();
+  if (trimmed.length < 2) return [];
+
+  const token = await getAccessToken();
+  if (!token) throw new Error('No access token');
+
+  const yahooUrl = `${BACKEND_URL}/yahoo/league/${leagueId}/players;search=${encodeURIComponent(trimmed)};start=0;count=${limit}`;
+  try {
+    const res = await fetch(yahooUrl, {
+      headers: { 'Authorization': `Bearer ${token}` },
+    });
+
+    if (res.ok) {
+      const data = await res.json();
+      const league = data?.fantasy_content?.league;
+      const playersWrapper = Array.isArray(league) ? league[1]?.players : null;
+      const count = playersWrapper?.count || 0;
+      const players: DraftablePlayerOption[] = [];
+
+      for (let i = 0; i < count; i++) {
+        const parsed = parseYahooPlayerCollectionEntry(playersWrapper[i]?.player);
+        if (parsed) players.push(parsed);
+      }
+
+      if (players.length > 0) return players;
+    }
+  } catch (err) {
+    console.warn('Yahoo draftable player search failed, falling back to cache:', err);
+  }
+
+  try {
+    const fallback = await fetch(`${BACKEND_URL}/players/search?q=${encodeURIComponent(trimmed)}`);
+    if (!fallback.ok) return [];
+    const data = await fallback.json();
+    return (data.players || []).map((player: any) => ({
+      playerKey: player.player_key || player.player_id || player.player_name,
+      playerName: player.player_name || '',
+      position: player.position || '',
+      nflTeam: player.nfl_team || '',
+      searchSource: 'cache' as const,
+    }));
+  } catch {
+    return [];
+  }
 };
 
 // 7️⃣ Fetch all historical rosters for a league across all seasons
@@ -1140,6 +1287,33 @@ const fetchLeagueDraftResults = async (
     }
   } catch (_) {}
 
+  // Fetch roster positions from league settings
+  let rosterPositions: Array<{ position: string; count: number; isStarting: boolean }> = [];
+  try {
+    const settingsRes = await fetch(`${BACKEND_URL}/yahoo/league/${leagueKey}/settings`, {
+      headers: { 'Authorization': `Bearer ${token}` },
+    });
+    if (settingsRes.ok) {
+      const settingsData = await settingsRes.json();
+      const settingsLeague = settingsData?.fantasy_content?.league;
+      if (Array.isArray(settingsLeague)) {
+        const rpArr = settingsLeague[1]?.settings?.[0]?.roster_positions;
+        if (Array.isArray(rpArr)) {
+          rosterPositions = rpArr
+            .map((rp: any) => {
+              const entry = rp.roster_position ?? rp;
+              return {
+                position: entry.position ?? '',
+                count: parseInt(entry.count) || 1,
+                isStarting: entry.is_starting_position === '1' || entry.is_starting_position === 1,
+              };
+            })
+            .filter(rp => rp.position.length > 0);
+        }
+      }
+    }
+  } catch (_) {}
+
   // Fetch draft results
   const draftRes = await fetch(`${BACKEND_URL}/yahoo/league/${leagueKey}/draftresults`, {
     headers: { 'Authorization': `Bearer ${token}` }
@@ -1310,14 +1484,68 @@ const fetchLeagueDraftResults = async (
           managerName: picks[idx].managerName,
         })),
         trades,
+        rosterPositions,
         ...(chainOpts ? { rootKey: chainOpts.rootKey, chain: chainOpts.chain } : {}),
       }),
     });
   } catch (_) {}
 
   const teams = teamsFromPicks(picks);
-  return { season, leagueKey, picks, teams, isAuction };
+  return { season, leagueKey, picks, teams, isAuction, rosterPositions: rosterPositions.length > 0 ? rosterPositions : undefined };
 };
+
+// Fetch roster positions for a league and store them in the DB (backfill helper)
+async function fetchAndCacheRosterPositions(
+  leagueKey: string,
+): Promise<Array<{ position: string; count: number; isStarting: boolean }> | null> {
+  try {
+    const token = await getAccessToken();
+    const settingsRes = await fetch(`${BACKEND_URL}/yahoo/league/${leagueKey}/settings`, {
+      headers: { 'Authorization': `Bearer ${token}` },
+    });
+    if (!settingsRes.ok) {
+      console.warn(`⚠️ roster positions fetch failed for ${leagueKey}: HTTP ${settingsRes.status}`);
+      return null;
+    }
+    const settingsData = await settingsRes.json();
+    const settingsLeague = settingsData?.fantasy_content?.league;
+    if (!Array.isArray(settingsLeague)) {
+      console.warn(`⚠️ roster positions: unexpected settings shape for ${leagueKey}`, JSON.stringify(settingsData).slice(0, 800));
+      return null;
+    }
+    const settings1 = settingsLeague[1];
+    const s0 = settings1?.settings?.[0];
+    const rpArr: any[] | undefined = s0?.roster_positions ?? settings1?.roster_positions;
+    if (!Array.isArray(rpArr)) {
+      console.warn(`⚠️ roster positions: no roster_positions array for ${leagueKey}`);
+      return null;
+    }
+    const positions = rpArr
+      .map((rp: any) => {
+        const entry = rp.roster_position ?? rp;
+        return {
+          position: entry.position ?? '',
+          count: parseInt(entry.count) || 1,
+          isStarting: entry.is_starting_position === '1' || entry.is_starting_position === 1,
+        };
+      })
+      .filter(rp => rp.position.length > 0);
+    if (positions.length === 0) {
+      console.warn(`⚠️ roster positions: parsed empty list for ${leagueKey}`);
+      return null;
+    }
+    console.log(`📋 Backfilling ${positions.length} roster positions for ${leagueKey}`);
+    await fetch(`${BACKEND_URL}/cache/roster-positions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ leagueKey, positions }),
+    });
+    return positions;
+  } catch (e) {
+    console.warn(`⚠️ fetchAndCacheRosterPositions failed for ${leagueKey}:`, e);
+    return null;
+  }
+}
 
 // 🏈 Get multi-season draft results (follows renew links, uses cache)
 export const getMultiSeasonDraftResults = async (
@@ -1350,15 +1578,29 @@ export const getMultiSeasonDraftResults = async (
               originalManagerName: p.original_manager_name || undefined,
             }));
             const isAuction = picks.some(p => (p.cost ?? 0) > 0);
+            const rosterPositions = Array.isArray(s.rosterPositions) && s.rosterPositions.length > 0
+              ? s.rosterPositions
+              : undefined;
             return {
               season: s.season,
               leagueKey: s.leagueKey,
               picks,
               teams: teamsFromPicks(picks),
               isAuction,
+              rosterPositions,
             };
           });
         results.sort((a, b) => Number(b.season) - Number(a.season));
+        // Backfill roster positions for any season cached before this feature was added
+        const missing = results.filter(r => !r.rosterPositions);
+        if (missing.length > 0) {
+          console.log(`📋 Backfilling roster positions for ${missing.length} season(s)...`);
+          for (const r of missing) {
+            const positions = await fetchAndCacheRosterPositions(r.leagueKey);
+            if (positions) r.rosterPositions = positions;
+            if (missing.length > 1) await new Promise(res => setTimeout(res, 300));
+          }
+        }
         return results;
       }
     }
@@ -1402,12 +1644,20 @@ export const getMultiSeasonDraftResults = async (
             cost: p.cost ?? undefined,
             originalManagerName: p.original_manager_name || undefined,
           }));
+          let rosterPositions: typeof cacheData.rosterPositions =
+            Array.isArray(cacheData.rosterPositions) && cacheData.rosterPositions.length > 0
+              ? cacheData.rosterPositions
+              : undefined;
+          if (!rosterPositions) {
+            rosterPositions = await fetchAndCacheRosterPositions(leagueKey) ?? undefined;
+          }
           results.push({
             season,
             leagueKey,
             picks: cachedPicks,
             teams: teamsFromPicks(cachedPicks),
             isAuction: cachedPicks.some(p => (p.cost ?? 0) > 0),
+            rosterPositions,
           });
           continue;
         }

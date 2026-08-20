@@ -49,6 +49,20 @@ const ManagerInsights: React.FC<ManagerInsightsProps> = ({
   const [ownershipFilter, setOwnershipFilter] = useState(3);
   const isMobile = useIsMobile();
 
+  // Normalize loyalty scores relative to the league's own min/max
+  const loyaltyScores = tendencies.map(t => t.loyaltyScore);
+  const loyaltyMin = loyaltyScores.length ? Math.min(...loyaltyScores) : 0;
+  const loyaltyMax = loyaltyScores.length ? Math.max(...loyaltyScores) : 100;
+  const loyaltyRange = loyaltyMax - loyaltyMin || 1;
+  const normalizeLoyalty = (score: number): { label: string; color: string } => {
+    const pct = (score - loyaltyMin) / loyaltyRange; // 0–1
+    if (pct >= 0.8) return { label: 'Very High', color: '#4ADE80' };
+    if (pct >= 0.6) return { label: 'High',      color: '#60A5FA' };
+    if (pct >= 0.4) return { label: 'Medium',    color: 'var(--gold)' };
+    if (pct >= 0.2) return { label: 'Low',       color: '#FB923C' };
+    return               { label: 'Very Low',   color: '#F87171' };
+  };
+
   if (loading) {
     return (
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '400px' }}>
@@ -503,8 +517,8 @@ const ManagerInsights: React.FC<ManagerInsightsProps> = ({
                     </div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
                       <Heart style={{ color: 'var(--red)' }} size={14} />
-                      <span style={{ fontFamily: "'Cinzel', serif", fontWeight: 900, fontSize: '1.4rem', color: 'var(--text-primary)' }}>
-                        {tendency.loyaltyScore}%
+                      <span style={{ fontFamily: "'Barlow Condensed', serif", fontWeight: 700, fontSize: '1.1rem', letterSpacing: '0.06em', color: normalizeLoyalty(tendency.loyaltyScore).color }}>
+                        {normalizeLoyalty(tendency.loyaltyScore).label}
                       </span>
                     </div>
                   </div>
