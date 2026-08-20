@@ -157,6 +157,7 @@ export interface RosterPlayer {
   nflTeam: string;
   acquisitionType: 'draft' | 'freeagent' | 'waivers' | 'trade' | string;
   acquisitionDate: string | null;
+  postDeadlineDays?: number;
   isOnIR: boolean;
   isKeeperIneligible?: boolean;
 }
