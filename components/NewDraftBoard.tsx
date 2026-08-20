@@ -182,9 +182,9 @@ export default function NewDraftBoard({
 
   const numTeams = teams.length;
 
-  // Overall pick number: linear left-to-right per round, matching display column order
+  // Overall pick number follows a snake: odd rounds run left-to-right, even rounds right-to-left.
   const getPickNum = (round: number, teamIndex: number) =>
-    (round - 1) * numTeams + teamIndex + 1;
+    (round - 1) * numTeams + (round % 2 === 1 ? teamIndex : numTeams - teamIndex - 1) + 1;
 
   const updateCell = (round: number, teamKey: string, value: string) => {
     setBoard(prev => {
@@ -691,7 +691,7 @@ export default function NewDraftBoard({
                   <RotateCcw size={10} /> Clear
                 </button>
               </div>
-              {teams.map((team, ti) => (
+              {(round % 2 === 0 ? [...teams].reverse() : teams).map((team, ti) => (
                 <div key={team.teamKey} style={{
                   padding: '0.65rem 0.85rem',
                   borderTop: ti === 0 ? 'none' : '1px solid rgba(255,255,255,0.04)',
