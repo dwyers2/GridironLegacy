@@ -267,7 +267,7 @@ export function getCachedLeagues(): Array<{
   keeper_cost_rule: string | null;
   draft_board_order: string | null;
 }> {
-  return db.prepare(`
+  const leagues = db.prepare(`
     SELECT league_key, league_name, season, game_id, is_keeper_league,
       max_keepers, max_years_kept, lock_past_seasons, waiver_keeper_round,
       keeper_cost_rule, draft_board_order
@@ -275,6 +275,14 @@ export function getCachedLeagues(): Array<{
     WHERE league_key IN (SELECT DISTINCT league_key FROM teams)
     ORDER BY CAST(season AS INTEGER) DESC, league_name
   `).all() as any;
+
+  const seenLeagueIds = new Set<string>();
+  return leagues.filter((league) => {
+    const leagueId = league.league_key.match(/\.l\.(.+)$/)?.[1] || league.league_key;
+    if (seenLeagueIds.has(leagueId)) return false;
+    seenLeagueIds.add(leagueId);
+    return true;
+  });
 }
 
 export interface FutureDraftPickTrade {
