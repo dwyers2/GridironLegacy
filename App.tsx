@@ -1346,7 +1346,7 @@ const App: React.FC = () => {
                                       </div>
                                       <div style={{ fontFamily: "'Outfit', sans-serif", fontSize: '0.7rem', color: 'var(--text-muted)', display: 'flex', gap: '0.35rem', alignItems: 'center', marginTop: '0.05rem' }}>
                                         <span>{player.nflTeam || '—'}</span>
-                                        {player.acquisitionDate && <><span style={{ opacity: 0.35 }}>·</span><span>{player.acquisitionDate}</span></>}
+                                        {player.postDeadlineDays != null && <><span style={{ opacity: 0.35 }}>·</span><span style={{ color: '#E05252', fontWeight: 700 }}>{player.postDeadlineDays}d</span></>}
                                         {(() => {
                                           const fc = dynastyRankings.get(player.playerName.toLowerCase());
                                           if (!fc) return null;

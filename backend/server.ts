@@ -947,6 +947,8 @@ app.get('/api/cache/current-rosters/:leagueKey', (req, res) => {
     const rows = db.getCachedCurrentRosters(leagueKey, season);
     console.log(`   → ${rows.length} rows found`);
     const cacheAge = db.getCurrentRosterCacheAge(leagueKey, season);
+    const tradeDeadline = db.getTradeDeadline(leagueKey);
+    const deadlineMs = tradeDeadline ? new Date(`${tradeDeadline}T23:59:59`).getTime() : null;
 
     const teamsMap = new Map<string, any>();
     for (const row of rows) {
@@ -959,6 +961,12 @@ app.get('/api/cache/current-rosters/:leagueKey', (req, res) => {
           players: [],
         });
       }
+      const isPostDeadline = !!deadlineMs && !!row.acquisition_date
+        && (row.acquisition_type === 'freeagent' || row.acquisition_type === 'waivers')
+        && new Date(row.acquisition_date).getTime() > deadlineMs;
+      const postDeadlineDays = isPostDeadline
+        ? Math.max(1, Math.ceil((new Date(row.acquisition_date).getTime() - deadlineMs) / (24 * 60 * 60 * 1000)))
+        : undefined;
       teamsMap.get(row.team_key).players.push({
         playerId: row.player_id,
         playerName: row.player_name,
@@ -966,8 +974,9 @@ app.get('/api/cache/current-rosters/:leagueKey', (req, res) => {
         nflTeam: row.nfl_team,
         acquisitionType: row.acquisition_type,
         acquisitionDate: row.acquisition_date,
+        ...(postDeadlineDays !== undefined ? { postDeadlineDays } : {}),
         isOnIR: row.is_on_ir === 1,
-        isKeeperIneligible: row.is_keeper_ineligible === 1,
+        isKeeperIneligible: row.is_keeper_ineligible === 1 || isPostDeadline,
       });
     }
 
