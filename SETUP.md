@@ -152,8 +152,8 @@ When the backend proxies requests, you'll see:
 - Clear localStorage and re-authenticate
 
 #### Error: `403 Forbidden`
-**Cause:** Missing OAuth scopes
-**Solution:** Check that your Yahoo app has the `fspt-r` scope enabled
+**Cause:** The Yahoo app itself is not authorized for Fantasy Sports access.
+**Solution:** In the Yahoo Developer Console, verify the app has Fantasy Sports read access enabled, then re-run login and approve the consent screen again. If you are using the wrong Yahoo app credentials on Fly, update the Fly secrets and re-deploy.
 
 #### Error: `500 Internal Server Error`
 **Cause:** Yahoo's API is having issues OR incorrect API endpoint
