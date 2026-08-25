@@ -888,12 +888,14 @@ app.post('/api/cache/current-rosters', (req, res) => {
   }
 });
 
-// FantasyCalc dynasty rankings — cached in DB for 24 hours
+// FantasyCalc current redraft half-PPR rankings — cached in DB for 24 hours
 app.get('/api/fantasycalc/rankings', async (req, res) => {
   try {
-    const FANTASYCALC_URL = 'https://api.fantasycalc.com/values/current?isDynasty=true&numQbs=1&numTeams=12&ppr=1';
+    const RANKING_PROFILE = 'redraft-half-ppr-1qb-12-team';
+    const FANTASYCALC_URL = 'https://api.fantasycalc.com/values/current?isDynasty=false&numQbs=1&numTeams=12&ppr=0.5';
     const cacheAge = db.getFantasyCalcCacheAge();
-    const isFresh = cacheAge !== null && (Date.now() - cacheAge.getTime()) < 24 * 60 * 60 * 1000;
+    const isFresh = db.getFantasyCalcCacheProfile() === RANKING_PROFILE
+      && cacheAge !== null && (Date.now() - cacheAge.getTime()) < 24 * 60 * 60 * 1000;
 
     if (isFresh) {
       return res.json({ players: db.getAllFantasyCalcRankings(), cached: true });
@@ -916,6 +918,7 @@ app.get('/api/fantasycalc/rankings', async (req, res) => {
       positionRank: p.positionRank,
       value: p.value,
     })));
+    db.setFantasyCalcCacheProfile(RANKING_PROFILE);
 
     return res.json({ players: db.getAllFantasyCalcRankings(), cached: false });
   } catch (err: any) {

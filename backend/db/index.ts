@@ -121,7 +121,7 @@ export function initializeDatabase() {
     );
   `);
 
-  // FantasyCalc dynasty rankings cache
+  // FantasyCalc current redraft rankings cache
   db.exec(`
     CREATE TABLE IF NOT EXISTS fantasycalc_players (
       fc_id INTEGER PRIMARY KEY,
@@ -1118,11 +1118,21 @@ export function getLatestTransactionTimestamp(leagueKey: string, season: string)
   return r.ts || 0;
 }
 
-// ─── FantasyCalc Dynasty Rankings Cache ───────────────────────────────────────
+// ─── FantasyCalc Current Redraft Rankings Cache ──────────────────────────────
 
 export function getFantasyCalcCacheAge(): Date | null {
   const r = db.prepare(`SELECT MAX(last_updated) as max_ts FROM fantasycalc_players`).get() as { max_ts: string | null };
   return r?.max_ts ? new Date(r.max_ts) : null;
+}
+
+export function getFantasyCalcCacheProfile(): string | null {
+  const row = db.prepare('SELECT value FROM cache_metadata WHERE key = ?').get('fantasycalc_rankings_profile') as { value: string } | undefined;
+  return row?.value || null;
+}
+
+export function setFantasyCalcCacheProfile(profile: string): void {
+  db.prepare('INSERT OR REPLACE INTO cache_metadata (key, value, last_updated) VALUES (?, ?, CURRENT_TIMESTAMP)')
+    .run('fantasycalc_rankings_profile', profile);
 }
 
 export function saveFantasyCalcRankings(players: Array<{

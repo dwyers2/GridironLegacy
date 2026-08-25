@@ -2185,7 +2185,7 @@ export const refreshCurrentRosters = async (leagueKey: string, season?: string):
   return fetchCurrentRosters(leagueKey, season);
 };
 
-export const fetchDynastyRankings = async (): Promise<Map<string, { overallRank: number; positionRank: number; value: number }>> => {
+export const fetchCurrentRankings = async (): Promise<Map<string, { overallRank: number; positionRank: number; value: number }>> => {
   try {
     const res = await fetch(`${BACKEND_URL}/fantasycalc/rankings`);
     if (!res.ok) return new Map();
