@@ -79,7 +79,7 @@ const App: React.FC = () => {
   const [historicalRostersLoading, setHistoricalRostersLoading] = useState(false);
   const [rosterKeeperSummary, setRosterKeeperSummary] = useState<KeeperSummary | null>(null);
   const [rosterKeeperLoading, setRosterKeeperLoading] = useState(false);
-  const [dynastyRankings, setDynastyRankings] = useState<Map<string, { overallRank: number; positionRank: number; value: number }>>(new Map());
+  const [currentRankings, setCurrentRankings] = useState<Map<string, { overallRank: number; positionRank: number; value: number }>>(new Map());
   const [currentUserGuid, setCurrentUserGuid] = useState<string | null>(null);
   const [leagueSwitcherOpen, setLeagueSwitcherOpen] = useState(false);
   const leagueSwitcherRef = useRef<HTMLDivElement>(null);
@@ -352,8 +352,8 @@ const App: React.FC = () => {
         });
       }
 
-      // Kick off dynasty rankings fetch in the background
-      yahooService.fetchDynastyRankings().then(r => setDynastyRankings(r)).catch(() => {});
+      // Kick off current redraft half-PPR rankings fetch in the background
+      yahooService.fetchCurrentRankings().then(r => setCurrentRankings(r)).catch(() => {});
     } catch (err: any) {
       console.error('Failed to load league details:', err);
       setError(`Failed to load league details: ${err.message}`);
@@ -1286,8 +1286,8 @@ const App: React.FC = () => {
                               const bi = posOrder.indexOf(b.position);
                               const posDiff = (ai === -1 ? 99 : ai) - (bi === -1 ? 99 : bi);
                               if (posDiff !== 0) return posDiff;
-                              const ar = dynastyRankings.get(a.playerName.toLowerCase())?.overallRank ?? Infinity;
-                              const br = dynastyRankings.get(b.playerName.toLowerCase())?.overallRank ?? Infinity;
+                              const ar = currentRankings.get(a.playerName.toLowerCase())?.overallRank ?? Infinity;
+                              const br = currentRankings.get(b.playerName.toLowerCase())?.overallRank ?? Infinity;
                               return ar - br;
                             }).map((player, idx, sorted) => {
                               const isIRDivider = idx > 0 && player.isOnIR && !sorted[idx - 1].isOnIR;
@@ -1325,7 +1325,6 @@ const App: React.FC = () => {
                                     alignItems: 'center',
                                     gap: '0.5rem',
                                     padding: '0.45rem 1.25rem',
-                                    opacity: player.isOnIR ? 0.55 : 1,
                                     background: isKeeperIneligible && selectedLeague?.isKeeperLeague !== false ? 'rgba(224,82,82,0.08)' : undefined,
                                     borderLeft: isKept ? '2px solid rgba(212,160,23,0.5)' : isKeeperIneligible && selectedLeague?.isKeeperLeague !== false ? '2px solid rgba(224,82,82,0.4)' : '2px solid transparent',
                                   }}>
@@ -1348,7 +1347,7 @@ const App: React.FC = () => {
                                         <span>{player.nflTeam || '—'}</span>
                                         {player.acquisitionDate && <><span style={{ opacity: 0.35 }}>·</span><span>{player.acquisitionDate}</span></>}
                                         {(() => {
-                                          const fc = dynastyRankings.get(player.playerName.toLowerCase());
+                                          const fc = currentRankings.get(player.playerName.toLowerCase());
                                           if (!fc) return null;
                                           const color = fc.overallRank <= 75 ? '#22A85F' : fc.overallRank <= 150 ? '#D4A017' : '#E05252';
                                           return <><span style={{ opacity: 0.35 }}>·</span><span style={{ color }}>#{fc.overallRank}</span></>;

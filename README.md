@@ -10,7 +10,7 @@ Dynasty Alchemy is a fantasy-football dynasty analytics app built around Yahoo F
 - **Current Rosters** — Cached roster snapshots with acquisition details and keeper eligibility.
 - **Player Ownership** — Multi-season ownership and manager history scoped to the selected league chain.
 - **Manager Tendencies** — Data-driven and AI-assisted manager profiles.
-- **Dynasty Rankings** — FantasyCalc dynasty values integrated into player views.
+- **Current Rankings** — FantasyCalc current redraft half-PPR rankings integrated into player views.
 - **Multi-league support** — Switch between Yahoo leagues and preserved historical league chains.
 - **Cached recovery mode** — Read and update locally cached data when Yahoo Fantasy API access is unavailable.
 
