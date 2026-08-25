@@ -859,10 +859,8 @@ app.post('/api/cache/current-rosters', (req, res) => {
     const roundByPlayerId = db.getDraftRoundsForLeague(leagueKey);
 
     // Keeper eligibility from league settings
-    const costRule = db.getKeeperCostRule(leagueKey);
     const maxYearsKeptSetting = db.getMaxYearsKept(leagueKey);
-    // round_minus_1: round 1 drafts cost round 0 (invalid) → only round 1 ineligible
-    const minEligibleRound = costRule === 'round_minus_1' ? 2 : 1;
+    const ineligibleThroughRound = db.getKeeperIneligibleThroughRound(leagueKey);
 
     const chain = db.getChainContaining(leagueKey);
     const chainKeys = chain ? chain.map((c: any) => c.leagueKey) : [];
@@ -875,7 +873,8 @@ app.post('/api/cache/current-rosters', (req, res) => {
       const isPostDeadline = !!deadlineMs && !!e.acquisitionDate
         && (e.acquisitionType === 'freeagent' || e.acquisitionType === 'waivers')
         && new Date(e.acquisitionDate).getTime() > deadlineMs;
-      const isTopRound = draftRound !== undefined && draftRound < minEligibleRound;
+      // Early-round players become eligible again if they were kept last season.
+      const isTopRound = draftRound !== undefined && draftRound <= ineligibleThroughRound && timesKept === 0;
       const isMaxKept = maxYearsKeptSetting != null && timesKept >= maxYearsKeptSetting;
       return { ...e, isKeeperIneligible: isPostDeadline || isTopRound || isMaxKept };
     });
@@ -947,6 +946,14 @@ app.get('/api/cache/current-rosters/:leagueKey', (req, res) => {
     const rows = db.getCachedCurrentRosters(leagueKey, season);
     console.log(`   → ${rows.length} rows found`);
     const cacheAge = db.getCurrentRosterCacheAge(leagueKey, season);
+    const ineligibleThroughRound = db.getKeeperIneligibleThroughRound(leagueKey);
+    const chain = db.getChainContaining(leagueKey);
+    const chainKeys = chain ? chain.map((c: any) => c.leagueKey) : [];
+    const timesKeptById = db.getTimesKeptPerPlayer(chainKeys, String(Number(season) - 1));
+    const roundByPlayerId = db.getDraftRoundsForLeague(leagueKey);
+    const tradeDeadline = db.getTradeDeadline(leagueKey);
+    const deadlineMs = tradeDeadline ? new Date(tradeDeadline + 'T23:59:59').getTime() : null;
+    const maxYearsKeptSetting = db.getMaxYearsKept(leagueKey);
 
     const teamsMap = new Map<string, any>();
     for (const row of rows) {
@@ -967,7 +974,13 @@ app.get('/api/cache/current-rosters/:leagueKey', (req, res) => {
         acquisitionType: row.acquisition_type,
         acquisitionDate: row.acquisition_date,
         isOnIR: row.is_on_ir === 1,
-        isKeeperIneligible: row.is_keeper_ineligible === 1,
+        isKeeperIneligible: (!!deadlineMs && !!row.acquisition_date
+          && (row.acquisition_type === 'freeagent' || row.acquisition_type === 'waivers')
+          && new Date(row.acquisition_date).getTime() > deadlineMs)
+          || (maxYearsKeptSetting != null && (timesKeptById.get(row.player_id) || 0) >= maxYearsKeptSetting)
+          || (roundByPlayerId.get(row.player_id) !== undefined
+            && roundByPlayerId.get(row.player_id)! <= ineligibleThroughRound
+            && (timesKeptById.get(row.player_id) || 0) === 0),
       });
     }
 
@@ -1199,6 +1212,7 @@ app.get('/api/league-settings/:leagueKey', (req, res) => {
     maxYearsKept: db.getMaxYearsKept(leagueKey),
     lockPastSeasons: db.getLockPastSeasons(leagueKey),
     waiverKeeperRound: db.getWaiverKeeperRound(leagueKey),
+    keeperIneligibleThroughRound: db.getKeeperIneligibleThroughRound(leagueKey),
     keeperCostRule: db.getKeeperCostRule(leagueKey),
     draftBoardOrder: db.getDraftBoardOrder(leagueKey),
   });
@@ -1206,7 +1220,7 @@ app.get('/api/league-settings/:leagueKey', (req, res) => {
 
 app.post('/api/league-settings/:leagueKey', (req, res) => {
   const { leagueKey } = req.params;
-  const { isKeeperLeague, maxKeepers, maxYearsKept, lockPastSeasons, waiverKeeperRound, keeperCostRule, draftBoardOrder } = req.body;
+  const { isKeeperLeague, maxKeepers, maxYearsKept, lockPastSeasons, waiverKeeperRound, keeperIneligibleThroughRound, keeperCostRule, draftBoardOrder } = req.body;
   if (isKeeperLeague !== undefined) {
     if (typeof isKeeperLeague !== 'boolean') return res.status(400).json({ error: 'isKeeperLeague must be boolean' });
     db.setIsKeeperLeague(leagueKey, isKeeperLeague);
@@ -1229,6 +1243,11 @@ app.post('/api/league-settings/:leagueKey', (req, res) => {
     const val = waiverKeeperRound === null ? null : Number(waiverKeeperRound);
     if (waiverKeeperRound !== null && (isNaN(val as number) || (val as number) < 1)) return res.status(400).json({ error: 'waiverKeeperRound must be a positive number or null' });
     db.setWaiverKeeperRound(leagueKey, val);
+  }
+  if (keeperIneligibleThroughRound !== undefined) {
+    const val = keeperIneligibleThroughRound === null ? null : Number(keeperIneligibleThroughRound);
+    if (keeperIneligibleThroughRound !== null && (isNaN(val as number) || (val as number) < 0)) return res.status(400).json({ error: 'keeperIneligibleThroughRound must be a non-negative number or null' });
+    db.setKeeperIneligibleThroughRound(leagueKey, val);
   }
   if (keeperCostRule !== undefined) {
     if (!['round_minus_1', 'round', 'na'].includes(keeperCostRule)) return res.status(400).json({ error: 'keeperCostRule must be round_minus_1, round, or na' });

@@ -71,6 +71,9 @@ export function initializeDatabase() {
   if (!leagueColumns.includes('waiver_keeper_round')) {
     db.exec('ALTER TABLE leagues ADD COLUMN waiver_keeper_round INTEGER DEFAULT NULL');
   }
+  if (!leagueColumns.includes('keeper_ineligible_through_round')) {
+    db.exec('ALTER TABLE leagues ADD COLUMN keeper_ineligible_through_round INTEGER DEFAULT 4');
+  }
   if (!leagueColumns.includes('keeper_cost_rule')) {
     db.exec("ALTER TABLE leagues ADD COLUMN keeper_cost_rule TEXT DEFAULT 'round_minus_1'");
   }
@@ -185,6 +188,15 @@ export function setWaiverKeeperRound(leagueKey: string, value: number | null) {
   db.prepare('UPDATE leagues SET waiver_keeper_round = ? WHERE league_key = ?').run(value, leagueKey);
 }
 
+export function getKeeperIneligibleThroughRound(leagueKey: string): number {
+  const row = db.prepare('SELECT keeper_ineligible_through_round FROM leagues WHERE league_key = ?').get(leagueKey) as any;
+  return row?.keeper_ineligible_through_round == null ? 4 : Number(row.keeper_ineligible_through_round);
+}
+
+export function setKeeperIneligibleThroughRound(leagueKey: string, value: number | null) {
+  db.prepare('UPDATE leagues SET keeper_ineligible_through_round = ? WHERE league_key = ?').run(value, leagueKey);
+}
+
 export type KeeperCostRule = 'round_minus_1' | 'round' | 'na';
 
 export function getKeeperCostRule(leagueKey: string): KeeperCostRule {
@@ -264,12 +276,13 @@ export function getCachedLeagues(): Array<{
   max_years_kept: number | null;
   lock_past_seasons: number | null;
   waiver_keeper_round: number | null;
+  keeper_ineligible_through_round: number | null;
   keeper_cost_rule: string | null;
   draft_board_order: string | null;
 }> {
   return db.prepare(`
     SELECT league_key, league_name, season, game_id, is_keeper_league,
-      max_keepers, max_years_kept, lock_past_seasons, waiver_keeper_round,
+      max_keepers, max_years_kept, lock_past_seasons, waiver_keeper_round, keeper_ineligible_through_round,
       keeper_cost_rule, draft_board_order
     FROM leagues
     WHERE league_key IN (SELECT DISTINCT league_key FROM teams)

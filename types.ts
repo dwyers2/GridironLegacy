@@ -14,6 +14,8 @@ export interface League {
   lockPastSeasons?: boolean;
   /** Round a waiver/FA pickup costs when kept; null = use default (9) */
   waiverKeeperRound?: number | null;
+  /** Players drafted in this round or earlier are ineligible unless kept last season */
+  keeperIneligibleThroughRound?: number | null;
   /** How keeper cost is computed: round-1 (default), same round, or not tracked */
   keeperCostRule?: 'round_minus_1' | 'round' | 'na';
   /** Preferred manager order for the manual new-draft board */

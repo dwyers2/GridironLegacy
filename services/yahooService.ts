@@ -30,6 +30,7 @@ export const recoverCachedAccess = async (code: string): Promise<any[]> => {
     maxYearsKept: league.max_years_kept,
     lockPastSeasons: league.lock_past_seasons !== 0,
     waiverKeeperRound: league.waiver_keeper_round,
+    keeperIneligibleThroughRound: league.keeper_ineligible_through_round ?? 4,
     keeperCostRule: league.keeper_cost_rule || 'round_minus_1',
     draftBoardOrder: league.draft_board_order ? JSON.parse(league.draft_board_order) : null,
   }));
@@ -384,7 +385,7 @@ export const getLeagues = async (): Promise<any[]> => {
       try {
         const settingsRes = await fetch(`${BACKEND_URL}/league-settings/${encodeURIComponent(league.id)}`);
         if (!settingsRes.ok) return league;
-        const { isKeeperLeague, maxKeepers, maxYearsKept, lockPastSeasons, waiverKeeperRound, keeperCostRule, draftBoardOrder } = await settingsRes.json();
+        const { isKeeperLeague, maxKeepers, maxYearsKept, lockPastSeasons, waiverKeeperRound, keeperIneligibleThroughRound, keeperCostRule, draftBoardOrder } = await settingsRes.json();
         return {
           ...league,
           isKeeperLeague: isKeeperLeague === true,
@@ -392,6 +393,7 @@ export const getLeagues = async (): Promise<any[]> => {
           maxYearsKept: maxYearsKept ?? null,
           lockPastSeasons: lockPastSeasons !== false,
           waiverKeeperRound: waiverKeeperRound ?? null,
+          keeperIneligibleThroughRound: keeperIneligibleThroughRound ?? 4,
           keeperCostRule: keeperCostRule ?? 'round_minus_1',
           draftBoardOrder: Array.isArray(draftBoardOrder) ? draftBoardOrder : null,
         };
