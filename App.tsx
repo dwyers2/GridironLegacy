@@ -1623,7 +1623,7 @@ const App: React.FC = () => {
             )}
 
             {dashboardTab === 'settings' && selectedLeague && (() => {
-              const saveLeagueSetting = async (patch: { isKeeperLeague?: boolean; maxKeepers?: number | null; maxYearsKept?: number | null; lockPastSeasons?: boolean; waiverKeeperRound?: number | null; keeperCostRule?: 'round_minus_1' | 'round' | 'na'; draftBoardOrder?: string[] | null }) => {
+              const saveLeagueSetting = async (patch: { isKeeperLeague?: boolean; maxKeepers?: number | null; maxYearsKept?: number | null; lockPastSeasons?: boolean; waiverKeeperRound?: number | null; keeperIneligibleThroughRound?: number | null; keeperCostRule?: 'round_minus_1' | 'round' | 'na'; draftBoardOrder?: string[] | null }) => {
                 await fetch(`/api/league-settings/${encodeURIComponent(selectedLeague.id)}`, {
                   method: 'POST', headers: { 'Content-Type': 'application/json' },
                   body: JSON.stringify(patch),
@@ -1708,6 +1708,20 @@ const App: React.FC = () => {
                             fontSize: '0.9rem', fontWeight: 600,
                           }}
                         />
+                      </div>
+                    )}
+
+                    {selectedLeague.isKeeperLeague && (
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '1.1rem 1.25rem', background: 'var(--surface)', borderTop: '1px solid var(--border)' }}>
+                        <div>
+                          <div style={{ fontFamily: "'Outfit', sans-serif", fontWeight: 600, fontSize: '0.9rem', color: 'var(--text-primary)' }}>Early-Round Keeper Restriction</div>
+                          <div style={{ fontFamily: "'Outfit', sans-serif", fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '0.15rem' }}>
+                            Players drafted in this round or earlier cannot be kept unless they were kept last season. Use 0 for no restriction.
+                          </div>
+                        </div>
+                        <input type="number" min={0} max={30} placeholder="4" defaultValue={selectedLeague.keeperIneligibleThroughRound ?? 4}
+                          onBlur={(e: React.FocusEvent<HTMLInputElement>) => { const raw = e.target.value.trim(); const val = raw === '' ? null : parseInt(raw, 10); if (val !== (selectedLeague.keeperIneligibleThroughRound ?? 4)) saveLeagueSetting({ keeperIneligibleThroughRound: val }); }}
+                          style={{ flexShrink: 0, marginLeft: '1.5rem', width: '60px', textAlign: 'center', padding: '0.35rem 0.5rem', borderRadius: '6px', background: 'var(--surface-2)', border: '1px solid var(--border)', color: 'var(--text-primary)', fontFamily: "'Outfit', sans-serif", fontSize: '0.9rem', fontWeight: 600 }} />
                       </div>
                     )}
 
