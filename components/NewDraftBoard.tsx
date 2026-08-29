@@ -95,6 +95,8 @@ export default function NewDraftBoard({
   const lastSharedUpdateRef = useRef<string | null>(null);
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const saveInFlightRef = useRef(false);
+  const topScrollRef = useRef<HTMLDivElement>(null);
+  const tableScrollRef = useRef<HTMLDivElement>(null);
   const cellEditedRef = useRef(false);
   useEffect(() => {
     try {
@@ -155,6 +157,26 @@ export default function NewDraftBoard({
     }, 3000);
     return () => window.clearInterval(poll);
   }, [leagueId, sharedBoardLoaded]);
+
+  useEffect(() => {
+    const top = topScrollRef.current;
+    const table = tableScrollRef.current;
+    const spacer = top?.firstElementChild as HTMLElement | null;
+    if (!top || !table || !spacer) return;
+    const syncTop = () => { table.scrollLeft = top.scrollLeft; };
+    const syncTable = () => { top.scrollLeft = table.scrollLeft; };
+    const updateWidth = () => { spacer.style.width = `${table.scrollWidth}px`; };
+    top.addEventListener('scroll', syncTop);
+    table.addEventListener('scroll', syncTable);
+    const observer = new ResizeObserver(updateWidth);
+    observer.observe(table);
+    updateWidth();
+    return () => {
+      top.removeEventListener('scroll', syncTop);
+      table.removeEventListener('scroll', syncTable);
+      observer.disconnect();
+    };
+  }, [teams.length]);
 
   useEffect(() => {
     fetch(`/api/cache/future-draft-trades/${encodeURIComponent(leagueId)}`)
@@ -847,7 +869,10 @@ export default function NewDraftBoard({
   return (
     <div>
       {toolbar}
-      <div style={{
+      <div ref={topScrollRef} style={{ overflowX: 'auto', overflowY: 'hidden', height: '18px', marginBottom: '3px' }} aria-label="Scroll draft board horizontally">
+        <div style={{ height: '1px' }} />
+      </div>
+      <div ref={tableScrollRef} style={{
         overflowX: 'auto',
         border: '1px solid var(--border)',
         borderRadius: '10px',
