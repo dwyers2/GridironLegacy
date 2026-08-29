@@ -115,11 +115,10 @@ export default function NewDraftBoard({
     const next: BoardState = {};
     const validTeamKeys = new Set(teams.map(t => t.teamKey));
     const ownerForSlot = (round: number, defaultTeamKey: string): string | null => {
-      const trade = futureTrades.find(t => t.round === round && t.fromTeamKey === defaultTeamKey)
-        || futureTrades.find(t => t.round === round && t.toTeamKey === defaultTeamKey);
-      if (trade?.fromTeamKey === defaultTeamKey) return null;
-      if (trade?.toTeamKey === defaultTeamKey) return trade.fromTeamKey;
-      return defaultTeamKey;
+      // The trade's fromTeamKey identifies the original slot column; its
+      // toTeamKey is the manager who owns that slot now.
+      const trade = futureTrades.find(t => t.round === round && t.fromTeamKey === defaultTeamKey);
+      return trade ? trade.toTeamKey : defaultTeamKey;
     };
     for (const manager of keeperManagers) {
       if (!validTeamKeys.has(manager.teamKey)) continue;
