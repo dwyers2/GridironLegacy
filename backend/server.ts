@@ -1193,6 +1193,24 @@ app.post('/api/cache/future-draft-trades/:leagueKey', (req, res) => {
   }
 });
 
+// Shared New Draft board state. Last write wins; clients poll for changes.
+app.get('/api/new-draft-board/:leagueKey', (req, res) => {
+  res.json(db.getNewDraftBoard(req.params.leagueKey) || { board: {}, updatedAt: null });
+});
+
+app.post('/api/new-draft-board/:leagueKey', (req, res) => {
+  try {
+    const board = req.body?.board;
+    if (!board || typeof board !== 'object' || Array.isArray(board)) {
+      return res.status(400).json({ error: 'board object required' });
+    }
+    const updatedAt = db.setNewDraftBoard(req.params.leagueKey, board);
+    res.json({ success: true, updatedAt });
+  } catch (err: any) {
+    res.status(500).json({ error: 'Failed to save New Draft board', message: err.message });
+  }
+});
+
 // Clear cached draft data for a league (and its full historical chain)
 app.delete('/api/cache/draft/:leagueKey', (req, res) => {
   try {

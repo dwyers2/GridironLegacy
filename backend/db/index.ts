@@ -1135,6 +1135,21 @@ export function setFantasyCalcCacheProfile(profile: string): void {
     .run('fantasycalc_rankings_profile', profile);
 }
 
+export function getNewDraftBoard(leagueKey: string): { board: unknown; updatedAt: string } | null {
+  const row = db.prepare('SELECT value, last_updated FROM cache_metadata WHERE key = ?')
+    .get(`new_draft_board:${leagueKey}`) as { value: string; last_updated: string } | undefined;
+  if (!row) return null;
+  try { return { board: JSON.parse(row.value), updatedAt: row.last_updated }; } catch { return null; }
+}
+
+export function setNewDraftBoard(leagueKey: string, board: unknown): string {
+  db.prepare("INSERT OR REPLACE INTO cache_metadata (key, value, last_updated) VALUES (?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))")
+    .run(`new_draft_board:${leagueKey}`, JSON.stringify(board));
+  const row = db.prepare('SELECT last_updated FROM cache_metadata WHERE key = ?')
+    .get(`new_draft_board:${leagueKey}`) as { last_updated: string };
+  return row.last_updated;
+}
+
 export function saveFantasyCalcRankings(players: Array<{
   fcId: number;
   playerName: string;
