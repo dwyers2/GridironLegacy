@@ -90,6 +90,10 @@ export default function NewDraftBoard({
   const [loadingSuggestions, setLoadingSuggestions] = useState(false);
   const [viewMode, setViewMode] = useState<'round' | 'position'>('round');
   const [futureTrades, setFutureTrades] = useState<FutureDraftPickTrade[]>([]);
+  const [sharedBoardLoaded, setSharedBoardLoaded] = useState(false);
+  const lastSharedUpdateRef = useRef<string | null>(null);
+  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const saveInFlightRef = useRef(false);
   const cellEditedRef = useRef(false);
   useEffect(() => {
     try {
@@ -100,9 +104,56 @@ export default function NewDraftBoard({
   }, [storageKey]);
 
   useEffect(() => {
+    let cancelled = false;
+    fetch(`/api/new-draft-board/${encodeURIComponent(leagueId)}`)
+      .then(res => res.ok ? res.json() : null)
+      .then(data => {
+        if (cancelled || !data) return;
+        if (data.updatedAt && data.board && typeof data.board === 'object' && !Array.isArray(data.board)) {
+          setBoard(normalizeStoredBoard(data.board));
+        }
+        lastSharedUpdateRef.current = data.updatedAt || null;
+      })
+      .catch(() => {})
+      .finally(() => { if (!cancelled) setSharedBoardLoaded(true); });
+    return () => { cancelled = true; };
+  }, [leagueId]);
+
+  useEffect(() => {
     if (!isHydrated) return;
     localStorage.setItem(storageKey, JSON.stringify(board));
-  }, [board, isHydrated, storageKey]);
+    if (!sharedBoardLoaded) return;
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+    saveTimerRef.current = setTimeout(() => {
+      saveTimerRef.current = null;
+      saveInFlightRef.current = true;
+      fetch(`/api/new-draft-board/${encodeURIComponent(leagueId)}`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ board }),
+      }).then(res => res.ok ? res.json() : null)
+        .then(data => { if (data?.updatedAt) lastSharedUpdateRef.current = data.updatedAt; })
+        .catch(() => {})
+        .finally(() => { saveInFlightRef.current = false; });
+    }, 250);
+    return () => { if (saveTimerRef.current) clearTimeout(saveTimerRef.current); };
+  }, [board, isHydrated, leagueId, sharedBoardLoaded, storageKey]);
+
+  useEffect(() => {
+    if (!sharedBoardLoaded) return;
+    const poll = window.setInterval(() => {
+      if (saveTimerRef.current || saveInFlightRef.current) return;
+      fetch(`/api/new-draft-board/${encodeURIComponent(leagueId)}`)
+        .then(res => res.ok ? res.json() : null)
+        .then(data => {
+          if (!data?.updatedAt || data.updatedAt === lastSharedUpdateRef.current) return;
+          lastSharedUpdateRef.current = data.updatedAt;
+          if (data.board && typeof data.board === 'object' && !Array.isArray(data.board)) {
+            setBoard(normalizeStoredBoard(data.board));
+          }
+        }).catch(() => {});
+    }, 3000);
+    return () => window.clearInterval(poll);
+  }, [leagueId, sharedBoardLoaded]);
 
   useEffect(() => {
     fetch(`/api/cache/future-draft-trades/${encodeURIComponent(leagueId)}`)
