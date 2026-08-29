@@ -114,23 +114,43 @@ export default function NewDraftBoard({
   const keeperPrefills = useMemo(() => {
     const next: BoardState = {};
     const validTeamKeys = new Set(teams.map(t => t.teamKey));
+    const ownerForSlot = (round: number, defaultTeamKey: string): string | null => {
+      const trade = futureTrades.find(t => t.round === round && t.fromTeamKey === defaultTeamKey)
+        || futureTrades.find(t => t.round === round && t.toTeamKey === defaultTeamKey);
+      if (trade?.fromTeamKey === defaultTeamKey) return null;
+      if (trade?.toTeamKey === defaultTeamKey) return trade.fromTeamKey;
+      return defaultTeamKey;
+    };
     for (const manager of keeperManagers) {
       if (!validTeamKeys.has(manager.teamKey)) continue;
       for (const keeper of manager.keepers) {
         if (!keeper.keeperCost || keeper.keeperCost < 1 || keeper.keeperCost > rounds) continue;
-        next[cellKey(keeper.keeperCost, manager.teamKey)] = {
+        // A keeper consumes the team's owned slot at its cost round. If that
+        // slot was traded away, use the next earlier slot the team owns.
+        let assignedRound: number | null = null;
+        let assignedSlotTeamKey: string | null = null;
+        for (let round = keeper.keeperCost; round >= 1; round--) {
+          const slotTeamKey = teams.find(t => ownerForSlot(round, t.teamKey) === manager.teamKey)?.teamKey;
+          if (slotTeamKey) {
+            assignedRound = round;
+            assignedSlotTeamKey = slotTeamKey;
+            break;
+          }
+        }
+        if (assignedRound == null || assignedSlotTeamKey == null) continue;
+        next[cellKey(assignedRound, assignedSlotTeamKey)] = {
           playerName: keeper.playerName,
           playerKey: keeper.playerKey,
           position: keeper.position,
           nflTeam: keeper.nflTeam,
           isKeeperPick: true,
-          keeperCost: keeper.keeperCost,
+          keeperCost: assignedRound,
           keeperStars: Math.min(2, Math.max(1, keeper.consecutiveYears || 1)),
         };
       }
     }
     return next;
-  }, [keeperManagers, rounds, teams]);
+  }, [futureTrades, keeperManagers, rounds, teams]);
 
   const tradedPicks = useMemo(() => {
     const result: Record<string, string> = {};
