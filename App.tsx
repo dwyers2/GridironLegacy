@@ -82,6 +82,8 @@ const App: React.FC = () => {
   const [currentRankings, setCurrentRankings] = useState<Map<string, { overallRank: number; positionRank: number; value: number }>>(new Map());
   const [currentUserGuid, setCurrentUserGuid] = useState<string | null>(null);
   const [leagueSwitcherOpen, setLeagueSwitcherOpen] = useState(false);
+  const [editingLeagueName, setEditingLeagueName] = useState(false);
+  const [leagueNameDraft, setLeagueNameDraft] = useState('');
   const leagueSwitcherRef = useRef<HTMLDivElement>(null);
 
   const isMobile = useIsMobile();
@@ -89,6 +91,24 @@ const App: React.FC = () => {
     ? (currentRosters.find(t => t.managerId === currentUserGuid)?.managerName ?? null)
     : null;
   const newDraftBoard = buildDraftBoardTeams(draftData, selectedLeague?.draftBoardOrder);
+
+  const saveLeagueName = async () => {
+    if (!selectedLeague) return;
+    const name = leagueNameDraft.trim();
+    if (!name || name === selectedLeague.name) {
+      setEditingLeagueName(false);
+      return;
+    }
+    const response = await fetch(`/api/league-settings/${encodeURIComponent(selectedLeague.id)}`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ leagueName: name }),
+    });
+    if (!response.ok) return;
+    const updated = { ...selectedLeague, name };
+    setSelectedLeague(updated);
+    setLeagues(prev => prev.map(league => league.id === updated.id ? { ...league, name } : league));
+    setEditingLeagueName(false);
+  };
 
   // ✅ Prevent double-processing with ref
   const isProcessingOAuth = useRef(false);
@@ -335,7 +355,7 @@ const App: React.FC = () => {
           }
         }).catch(() => {});
         Promise.all([
-          yahooService.fetchCurrentRosters(league.id, leagueSeason),
+          yahooService.fetchCurrentRosters(league.id, leagueSeason, league.name),
           yahooService.fetchTradeDeadline(league.id),
         ]).then(([rosters, deadline]) => {
           // Only update if the live fetch returned actual players; never blank out the cache
@@ -376,7 +396,7 @@ const App: React.FC = () => {
           setHistoricalRosters(rosters);
           setHistoricalRostersLoading(false);
         } else {
-          return yahooService.fetchCurrentRosters(leagueKeyForSeason, rosterViewSeason)
+          return yahooService.fetchCurrentRosters(leagueKeyForSeason, rosterViewSeason, selectedLeague.name)
             .then(fetched => { if (!cancelled) setHistoricalRosters(fetched); });
         }
       })
@@ -923,7 +943,7 @@ const App: React.FC = () => {
               </div>
 
               {/* League switcher */}
-              <div ref={leagueSwitcherRef} style={{ position: 'relative', alignSelf: 'flex-start' }}>
+              <div ref={leagueSwitcherRef} style={{ position: 'relative', alignSelf: 'flex-start', display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
                 <button
                   onClick={() => setLeagueSwitcherOpen(o => !o)}
                   style={{
@@ -941,6 +961,29 @@ const App: React.FC = () => {
                   Switch League
                   <ChevronDown size={13} style={{ transition: 'transform 0.15s', transform: leagueSwitcherOpen ? 'rotate(180deg)' : 'none' }} />
                 </button>
+                <button
+                  type="button"
+                  title="Rename league"
+                  aria-label="Rename league"
+                  onClick={() => { setLeagueNameDraft(selectedLeague?.name || ''); setEditingLeagueName(true); setLeagueSwitcherOpen(false); }}
+                  style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: '30px', height: '30px', padding: 0, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: '6px', color: 'var(--text-muted)', cursor: 'pointer' }}
+                >
+                  <PenSquare size={14} />
+                </button>
+
+                {editingLeagueName && (
+                  <div style={{ position: 'absolute', right: 0, top: 'calc(100% + 0.5rem)', zIndex: 210, display: 'flex', gap: '0.35rem', padding: '0.5rem', background: 'var(--surface-2)', border: '1px solid var(--border)', borderRadius: '8px', boxShadow: '0 8px 32px rgba(0,0,0,0.5)' }}>
+                    <input
+                      autoFocus
+                      value={leagueNameDraft}
+                      onChange={e => setLeagueNameDraft(e.target.value)}
+                      onKeyDown={e => { if (e.key === 'Enter') saveLeagueName(); if (e.key === 'Escape') setEditingLeagueName(false); }}
+                      onBlur={() => window.setTimeout(saveLeagueName, 100)}
+                      aria-label="League name"
+                      style={{ width: '190px', padding: '0.4rem 0.5rem', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: '5px', color: 'var(--text-primary)', fontFamily: "'Outfit', sans-serif", fontSize: '0.8rem', outline: 'none' }}
+                    />
+                  </div>
+                )}
 
                 {leagueSwitcherOpen && (
                   <div style={{

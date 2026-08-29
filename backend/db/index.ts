@@ -74,6 +74,9 @@ export function initializeDatabase() {
   if (!leagueColumns.includes('keeper_ineligible_through_round')) {
     db.exec('ALTER TABLE leagues ADD COLUMN keeper_ineligible_through_round INTEGER DEFAULT 4');
   }
+  if (!leagueColumns.includes('league_name_custom')) {
+    db.exec('ALTER TABLE leagues ADD COLUMN league_name_custom INTEGER DEFAULT 0');
+  }
   if (!leagueColumns.includes('keeper_cost_rule')) {
     db.exec("ALTER TABLE leagues ADD COLUMN keeper_cost_rule TEXT DEFAULT 'round_minus_1'");
   }
@@ -260,10 +263,28 @@ export function getKeeperLog(leagueKey: string, limit = 200): Array<{
 // Cache a league
 export function cacheLeague(leagueKey: string, leagueName: string, season: string, gameId: string) {
   const stmt = db.prepare(`
-    INSERT OR REPLACE INTO leagues (league_key, league_name, season, game_id, last_updated)
-    VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+    INSERT INTO leagues (league_key, league_name, season, game_id, league_name_custom, last_updated)
+    VALUES (?, ?, ?, ?, 0, CURRENT_TIMESTAMP)
+    ON CONFLICT(league_key) DO UPDATE SET
+      league_name = CASE
+        WHEN leagues.league_name_custom = 1 THEN leagues.league_name
+        WHEN excluded.league_name LIKE 'League %' AND leagues.league_name NOT LIKE 'League %' THEN leagues.league_name
+        ELSE excluded.league_name
+      END,
+      season = excluded.season,
+      game_id = excluded.game_id,
+      last_updated = CURRENT_TIMESTAMP
   `);
   stmt.run(leagueKey, leagueName, season, gameId);
+}
+
+export function getLeagueName(leagueKey: string): string | null {
+  const row = db.prepare('SELECT league_name FROM leagues WHERE league_key = ?').get(leagueKey) as { league_name: string } | undefined;
+  return row?.league_name || null;
+}
+
+export function setLeagueName(leagueKey: string, leagueName: string): void {
+  db.prepare('UPDATE leagues SET league_name = ?, league_name_custom = 1 WHERE league_key = ?').run(leagueName, leagueKey);
 }
 
 export function getCachedLeagues(): Array<{
