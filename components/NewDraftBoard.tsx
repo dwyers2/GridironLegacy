@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Loader2, RotateCcw, Star, Trash2, Users } from 'lucide-react';
+import { AlertTriangle, Loader2, RotateCcw, Star, Trash2, Users } from 'lucide-react';
 import { useIsMobile } from '../hooks/useIsMobile';
 import { DraftablePlayerOption, searchDraftablePlayers } from '../services/yahooService';
 import { DraftPick, ManagerKeepers, RosterPosition } from '../types';
@@ -87,6 +87,7 @@ export default function NewDraftBoard({
   const [isHydrated, setIsHydrated] = useState(false);
   const [activeCell, setActiveCell] = useState<string | null>(null);
   const [suggestions, setSuggestions] = useState<DraftablePlayerOption[]>([]);
+  const [selectedSuggestionIndex, setSelectedSuggestionIndex] = useState(0);
   const [loadingSuggestions, setLoadingSuggestions] = useState(false);
   const [viewMode, setViewMode] = useState<'round' | 'position'>('round');
   const [futureTrades, setFutureTrades] = useState<FutureDraftPickTrade[]>([]);
@@ -217,6 +218,14 @@ export default function NewDraftBoard({
   }, [futureTrades, seasonPicks, teams]);
 
   const displayedBoard = useMemo(() => ({ ...keeperPrefills, ...board }), [board, keeperPrefills]);
+  const duplicatePlayerNames = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const value of Object.values(displayedBoard)) {
+      const normalized = value.playerName.trim().toLowerCase();
+      if (normalized) counts.set(normalized, (counts.get(normalized) ?? 0) + 1);
+    }
+    return new Set([...counts.entries()].filter(([, count]) => count > 1).map(([name]) => name));
+  }, [displayedBoard]);
   const activeValue = activeCell ? (displayedBoard[activeCell]?.playerName ?? '') : '';
 
   const positionPicks = useMemo(() =>
@@ -246,6 +255,10 @@ export default function NewDraftBoard({
     }, 180);
     return () => { cancelled = true; window.clearTimeout(timer); };
   }, [activeCell, activeValue, leagueId]);
+
+  useEffect(() => {
+    setSelectedSuggestionIndex(0);
+  }, [suggestions]);
 
   const totalFilled = useMemo(
     () => (Object.values(displayedBoard) as BoardCellValue[]).filter(v => v.playerName.trim().length > 0).length,
@@ -291,6 +304,18 @@ export default function NewDraftBoard({
     setSuggestions([]);
   };
 
+  const moveToNextCell = (round: number, teamIndex: number) => {
+    if (teamIndex + 1 < teams.length) {
+      setActiveCell(cellKey(round, teams[teamIndex + 1].teamKey));
+    } else if (round < rounds) {
+      setActiveCell(cellKey(round + 1, teams[0].teamKey));
+    } else {
+      setActiveCell(null);
+    }
+    cellEditedRef.current = false;
+    setSuggestions([]);
+  };
+
   const clearRound = (round: number) => {
     setBoard(prev => {
       const next = { ...prev };
@@ -318,6 +343,7 @@ export default function NewDraftBoard({
     const colors = pos ? POS_COLORS[pos] : null;
     const isFilled = !!value?.playerName;
     const isKeeper = !!value?.isKeeperPick;
+    const isDuplicate = isFilled && duplicatePlayerNames.has(value.playerName.trim().toLowerCase());
     const tradedTo = tradedPicks[key] ?? null;
     const pickNum = getPickNum(round, teamIndex, isSnakeOrdered);
     const showDropdown = isActive &&
@@ -413,6 +439,15 @@ export default function NewDraftBoard({
               </span>
             )}
 
+            {isDuplicate && (
+              <AlertTriangle
+                size={11}
+                aria-label="Duplicate player"
+                title="Duplicate player on this draft board"
+                style={{ color: '#FB923C', flexShrink: 0 }}
+              />
+            )}
+
             {/* Traded pick indicator */}
             {tradedTo && (
               <span style={{
@@ -446,7 +481,33 @@ export default function NewDraftBoard({
               value={value?.playerName ?? ''}
               onChange={e => { cellEditedRef.current = true; updateCell(round, team.teamKey, e.target.value); }}
               onFocus={() => setActiveCell(key)}
-              onBlur={() => window.setTimeout(() => { setActiveCell(null); setSuggestions([]); }, 150)}
+              onKeyDown={e => {
+                if (e.key === 'Tab') {
+                  e.preventDefault();
+                  moveToNextCell(round, teamIndex);
+                } else if (e.key === 'ArrowDown' && suggestions.length > 0) {
+                  e.preventDefault();
+                  setSelectedSuggestionIndex(index => Math.min(index + 1, suggestions.length - 1));
+                } else if (e.key === 'ArrowUp' && suggestions.length > 0) {
+                  e.preventDefault();
+                  setSelectedSuggestionIndex(index => Math.max(index - 1, 0));
+                } else if (e.key === 'Enter' && suggestions[selectedSuggestionIndex]) {
+                  e.preventDefault();
+                  selectSuggestion(round, team.teamKey, suggestions[selectedSuggestionIndex]);
+                } else if (e.key === 'Escape') {
+                  setActiveCell(null);
+                  setSuggestions([]);
+                }
+              }}
+              onBlur={() => window.setTimeout(() => {
+                setActiveCell(current => {
+                  if (current === key) {
+                    setSuggestions([]);
+                    return null;
+                  }
+                  return current;
+                });
+              }, 150)}
               placeholder="type a name…"
               style={{
                 width: '100%',
@@ -531,7 +592,7 @@ export default function NewDraftBoard({
                     textAlign: 'left',
                     border: 'none',
                     borderTop: i > 0 ? '1px solid rgba(255,255,255,0.04)' : 'none',
-                    background: 'transparent',
+                    background: i === selectedSuggestionIndex ? 'rgba(212,160,23,0.07)' : 'transparent',
                     cursor: 'pointer',
                   }}
                   onMouseEnter={e => (e.currentTarget.style.background = 'rgba(212,160,23,0.07)')}
