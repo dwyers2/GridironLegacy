@@ -385,9 +385,10 @@ export const getLeagues = async (): Promise<any[]> => {
       try {
         const settingsRes = await fetch(`${BACKEND_URL}/league-settings/${encodeURIComponent(league.id)}`);
         if (!settingsRes.ok) return league;
-        const { isKeeperLeague, maxKeepers, maxYearsKept, lockPastSeasons, waiverKeeperRound, keeperIneligibleThroughRound, keeperCostRule, draftBoardOrder } = await settingsRes.json();
+        const { leagueName, isKeeperLeague, maxKeepers, maxYearsKept, lockPastSeasons, waiverKeeperRound, keeperIneligibleThroughRound, keeperCostRule, draftBoardOrder } = await settingsRes.json();
         return {
           ...league,
+          name: leagueName || league.name,
           isKeeperLeague: isKeeperLeague === true,
           maxKeepers: maxKeepers ?? null,
           maxYearsKept: maxYearsKept ?? null,
@@ -1999,7 +2000,7 @@ const resolveAcqType = (type: string, sourceType: string | null): RosterPlayer['
 //         determine the true acquisition date and method, overriding the
 //         often-stale value Yahoo returns on the roster endpoint.
 // Step 4: persist enriched roster snapshot to DB.
-export const fetchCurrentRosters = async (leagueKey: string, season?: string): Promise<TeamRoster[]> => {
+export const fetchCurrentRosters = async (leagueKey: string, season?: string, leagueName?: string): Promise<TeamRoster[]> => {
   const token = await getAccessToken();
   if (!token) throw new Error('No access token');
 
@@ -2136,7 +2137,7 @@ export const fetchCurrentRosters = async (leagueKey: string, season?: string): P
     fetch(`${BACKEND_URL}/cache/current-rosters`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ leagueKey, season: currentSeason, teams: teamInfos, entries: dbEntries }),
+      body: JSON.stringify({ leagueKey, leagueName, season: currentSeason, teams: teamInfos, entries: dbEntries }),
     }).catch(err => console.warn('Failed to persist current rosters:', err));
   }
 

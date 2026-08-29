@@ -829,13 +829,13 @@ app.post('/api/cache/tendencies', (req, res) => {
 // Save current roster snapshot (with acquisition data) for a league
 app.post('/api/cache/current-rosters', (req, res) => {
   try {
-    const { leagueKey, season, teams, entries } = req.body;
+    const { leagueKey, leagueName, season, teams, entries } = req.body;
     if (!leagueKey || !season || !Array.isArray(entries)) {
       return res.status(400).json({ error: 'leagueKey, season, and entries[] required' });
     }
 
     // Ensure the league row exists (FK for teams)
-    db.cacheLeague(leagueKey, `League ${season}`, season, leagueKey.split('.')[0] || '');
+    db.cacheLeague(leagueKey, leagueName || `League ${season}`, season, leagueKey.split('.')[0] || '');
 
     // Ensure all referenced teams exist in the teams table
     if (Array.isArray(teams)) {
@@ -1076,7 +1076,7 @@ app.post('/api/cache/teams', (req, res) => {
     const { teams } = req.body;
     if (!Array.isArray(teams)) return res.status(400).json({ error: 'teams array required' });
     for (const t of teams) {
-      db.cacheLeague(t.leagueKey, `League ${t.season}`, t.season, t.leagueKey.split('.')[0] || '');
+      db.cacheLeague(t.leagueKey, t.leagueName || `League ${t.season}`, t.season, t.leagueKey.split('.')[0] || '');
       db.cacheTeam(t.teamKey, t.leagueKey, t.teamName || '', t.managerId || '', t.managerName || '', t.season);
     }
     res.json({ success: true, count: teams.length });
@@ -1228,6 +1228,7 @@ app.delete('/api/cache/draft/:leagueKey', (req, res) => {
 app.get('/api/league-settings/:leagueKey', (req, res) => {
   const { leagueKey } = req.params;
   res.json({
+    leagueName: db.getLeagueName(leagueKey),
     isKeeperLeague: db.getIsKeeperLeague(leagueKey),
     maxKeepers: db.getMaxKeepers(leagueKey),
     maxYearsKept: db.getMaxYearsKept(leagueKey),
@@ -1241,7 +1242,11 @@ app.get('/api/league-settings/:leagueKey', (req, res) => {
 
 app.post('/api/league-settings/:leagueKey', (req, res) => {
   const { leagueKey } = req.params;
-  const { isKeeperLeague, maxKeepers, maxYearsKept, lockPastSeasons, waiverKeeperRound, keeperIneligibleThroughRound, keeperCostRule, draftBoardOrder } = req.body;
+  const { leagueName, isKeeperLeague, maxKeepers, maxYearsKept, lockPastSeasons, waiverKeeperRound, keeperIneligibleThroughRound, keeperCostRule, draftBoardOrder } = req.body;
+  if (leagueName !== undefined) {
+    if (typeof leagueName !== 'string' || !leagueName.trim()) return res.status(400).json({ error: 'leagueName must be a non-empty string' });
+    db.setLeagueName(leagueKey, leagueName.trim());
+  }
   if (isKeeperLeague !== undefined) {
     if (typeof isKeeperLeague !== 'boolean') return res.status(400).json({ error: 'isKeeperLeague must be boolean' });
     db.setIsKeeperLeague(leagueKey, isKeeperLeague);
