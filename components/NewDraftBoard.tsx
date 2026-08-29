@@ -762,6 +762,10 @@ export default function NewDraftBoard({
                 borderRight: '1px solid var(--border)',
                 textAlign: 'left',
                 verticalAlign: 'bottom',
+                position: 'sticky',
+                left: 0,
+                zIndex: 3,
+                background: 'var(--surface)',
               }}>
                 <span style={{
                   fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700,
@@ -771,7 +775,7 @@ export default function NewDraftBoard({
                   RD
                 </span>
               </th>
-              {teams.map(team => (
+              {teams.map((team, teamIndex) => (
                 <th key={team.teamKey} style={{
                   padding: '0.65rem 0.6rem',
                   borderBottom: '1px solid var(--border)',
@@ -792,7 +796,7 @@ export default function NewDraftBoard({
                     fontFamily: "'Outfit', sans-serif",
                     fontSize: '0.6rem', color: 'var(--text-muted)', marginTop: '0.1rem',
                   }}>
-                    Slot {team.draftSlot}
+                    Slot {teamIndex + 1}
                   </div>
                 </th>
               ))}
@@ -810,6 +814,9 @@ export default function NewDraftBoard({
                   background: 'var(--surface-2)',
                   borderRight: '1px solid var(--border)',
                   borderBottom: '1px solid rgba(255,255,255,0.03)',
+                  position: 'sticky',
+                  left: 0,
+                  zIndex: 2,
                 }}>
                   <div style={{
                     fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700,
