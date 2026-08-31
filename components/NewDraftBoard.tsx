@@ -203,7 +203,12 @@ export default function NewDraftBoard({
         let assignedRound: number | null = null;
         let assignedSlotTeamKey: string | null = null;
         for (let round = keeper.keeperCost; round >= 1; round--) {
-          const slotTeamKey = teams.find(t => ownerForSlot(round, t.teamKey) === manager.teamKey)?.teamKey;
+          // Use the latest pick in the snake-draft order when a manager owns
+          // multiple slots in the keeper's cost round. Odd rounds run from
+          // low to high slots; even rounds run from high to low slots.
+          const ownedSlots = teams.filter(t => ownerForSlot(round, t.teamKey) === manager.teamKey);
+          const slotTeamKey = ownedSlots
+            .sort((a, b) => round % 2 === 1 ? b.draftSlot - a.draftSlot : a.draftSlot - b.draftSlot)[0]?.teamKey;
           if (slotTeamKey) {
             assignedRound = round;
             assignedSlotTeamKey = slotTeamKey;
