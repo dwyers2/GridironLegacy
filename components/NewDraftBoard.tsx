@@ -244,7 +244,20 @@ export default function NewDraftBoard({
     return result;
   }, [futureTrades, seasonPicks, teams]);
 
-  const displayedBoard = useMemo(() => ({ ...keeperPrefills, ...board }), [board, keeperPrefills]);
+  const displayedBoard = useMemo(() => {
+    const next = { ...board };
+    for (const [keeperKey, keeper] of Object.entries(keeperPrefills)) {
+      const keeperName = keeper.playerName.trim().toLowerCase();
+      for (const [key, value] of Object.entries(next)) {
+        const isSameKeeper = value.playerKey && keeper.playerKey
+          ? value.playerKey === keeper.playerKey
+          : value.playerName.trim().toLowerCase() === keeperName;
+        if (key !== keeperKey && isSameKeeper) delete next[key];
+      }
+      next[keeperKey] = keeper;
+    }
+    return next;
+  }, [board, keeperPrefills]);
   const duplicatePlayerNames = useMemo(() => {
     const counts = new Map<string, number>();
     for (const value of Object.values(displayedBoard)) {
