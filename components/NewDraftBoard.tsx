@@ -203,12 +203,15 @@ export default function NewDraftBoard({
         let assignedRound: number | null = null;
         let assignedSlotTeamKey: string | null = null;
         for (let round = keeper.keeperCost; round >= 1; round--) {
-          // Use the latest pick in the snake-draft order when a manager owns
-          // multiple slots in the keeper's cost round. Odd rounds run from
-          // low to high slots; even rounds run from high to low slots.
-          const ownedSlots = teams.filter(t => ownerForSlot(round, t.teamKey) === manager.teamKey);
+          // Use the latest pick in the active draft-board order when a manager
+          // owns multiple slots in the keeper's cost round. The board order,
+          // rather than a prior season's historical slot, defines this draft.
+          // Odd rounds run from left to right; even rounds run right to left.
+          const ownedSlots = teams
+            .map((team, boardIndex) => ({ team, boardIndex }))
+            .filter(({ team }) => ownerForSlot(round, team.teamKey) === manager.teamKey);
           const slotTeamKey = ownedSlots
-            .sort((a, b) => round % 2 === 1 ? b.draftSlot - a.draftSlot : a.draftSlot - b.draftSlot)[0]?.teamKey;
+            .sort((a, b) => round % 2 === 1 ? b.boardIndex - a.boardIndex : a.boardIndex - b.boardIndex)[0]?.team.teamKey;
           if (slotTeamKey) {
             assignedRound = round;
             assignedSlotTeamKey = slotTeamKey;
