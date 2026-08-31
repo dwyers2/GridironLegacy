@@ -124,16 +124,29 @@ function isRecoveryTokenValid(token: string | undefined) {
   }
 }
 
+function getRecoveryToken(req: express.Request) {
+  const authorization = typeof req.headers.authorization === 'string'
+    ? req.headers.authorization.replace(/^Bearer\s+/i, '')
+    : undefined;
+  if (isRecoveryTokenValid(authorization)) return authorization;
+
+  const cookieHeader = typeof req.headers.cookie === 'string' ? req.headers.cookie : '';
+  const recoveryCookie = cookieHeader.split(';').map(part => part.trim()).find(part => part.startsWith('cached_recovery_token='));
+  return recoveryCookie ? decodeURIComponent(recoveryCookie.slice('cached_recovery_token='.length)) : undefined;
+}
+
 app.post('/api/recovery/access', (req, res) => {
   if (!CACHE_RECOVERY_CODE) return res.status(404).json({ error: 'Cached recovery is not configured' });
   const suppliedCode = typeof req.body?.code === 'string' ? req.body.code.trim() : '';
   const valid = suppliedCode.length === CACHE_RECOVERY_CODE.length && crypto.timingSafeEqual(Buffer.from(suppliedCode), Buffer.from(CACHE_RECOVERY_CODE));
   if (!valid) return res.status(401).json({ error: 'Invalid recovery code' });
-  res.json({ token: createRecoveryToken(), expiresIn: CACHE_RECOVERY_TTL_MS });
+  const token = createRecoveryToken();
+  res.setHeader('Set-Cookie', `cached_recovery_token=${encodeURIComponent(token)}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${Math.floor(CACHE_RECOVERY_TTL_MS / 1000)}`);
+  res.json({ token, expiresIn: CACHE_RECOVERY_TTL_MS });
 });
 
 app.get('/api/recovery/leagues', (req, res) => {
-  const token = typeof req.headers.authorization === 'string' ? req.headers.authorization.replace(/^Bearer\s+/i, '') : undefined;
+  const token = getRecoveryToken(req);
   if (!isRecoveryTokenValid(token)) return res.status(401).json({ error: 'Invalid or expired recovery session' });
   res.json({ leagues: db.getCachedLeagues() });
 });
