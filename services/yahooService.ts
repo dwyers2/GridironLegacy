@@ -3,37 +3,51 @@ import { League, PlayerStats, ManagerHistory, SeasonRosterData, TeamInfo, Manage
 const BACKEND_URL = '/api';
 const MIN_SWITCH_LEAGUE_SEASON = 2025;
 
-export const isRecoveryMode = (): boolean => Boolean(localStorage.getItem('cached_recovery_token'));
+export const isRecoveryMode = (): boolean => Boolean(
+  localStorage.getItem('cached_recovery_token') || localStorage.getItem('cached_recovery_session'),
+);
+
+const mapCachedLeague = (league: any) => ({
+  id: league.league_key,
+  name: league.league_name,
+  seasons: [league.season],
+  gameId: league.game_id,
+  isKeeperLeague: league.is_keeper_league === null ? true : league.is_keeper_league === 1,
+  maxKeepers: league.max_keepers,
+  maxYearsKept: league.max_years_kept,
+  lockPastSeasons: league.lock_past_seasons !== 0,
+  waiverKeeperRound: league.waiver_keeper_round,
+  keeperIneligibleThroughRound: league.keeper_ineligible_through_round ?? 4,
+  keeperCostRule: league.keeper_cost_rule || 'round_minus_1',
+  draftBoardOrder: league.draft_board_order ? JSON.parse(league.draft_board_order) : null,
+});
+
+export const getCachedLeagues = async (): Promise<any[]> => {
+  const token = localStorage.getItem('cached_recovery_token');
+  const leaguesRes = await fetch(`${BACKEND_URL}/recovery/leagues`, {
+    credentials: 'include',
+    headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+  });
+  const leaguesData = await leaguesRes.json();
+  if (!leaguesRes.ok) throw new Error(leaguesData.error || 'Could not load cached leagues');
+  localStorage.setItem('cached_recovery_session', '1');
+  return (leaguesData.leagues || [])
+    .filter((league: any) => Number(league.season) >= MIN_SWITCH_LEAGUE_SEASON)
+    .map(mapCachedLeague);
+};
 
 export const recoverCachedAccess = async (code: string): Promise<any[]> => {
   const accessRes = await fetch(`${BACKEND_URL}/recovery/access`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
     body: JSON.stringify({ code }),
   });
   const accessData = await accessRes.json();
   if (!accessRes.ok) throw new Error(accessData.error || 'Cached recovery failed');
   localStorage.setItem('cached_recovery_token', accessData.token);
-
-  const leaguesRes = await fetch(`${BACKEND_URL}/recovery/leagues`, {
-    headers: { Authorization: `Bearer ${accessData.token}` },
-  });
-  const leaguesData = await leaguesRes.json();
-  if (!leaguesRes.ok) throw new Error(leaguesData.error || 'Could not load cached leagues');
-  return (leaguesData.leagues || []).filter((league: any) => Number(league.season) >= MIN_SWITCH_LEAGUE_SEASON).map((league: any) => ({
-    id: league.league_key,
-    name: league.league_name,
-    seasons: [league.season],
-    gameId: league.game_id,
-    isKeeperLeague: league.is_keeper_league === null ? true : league.is_keeper_league === 1,
-    maxKeepers: league.max_keepers,
-    maxYearsKept: league.max_years_kept,
-    lockPastSeasons: league.lock_past_seasons !== 0,
-    waiverKeeperRound: league.waiver_keeper_round,
-    keeperIneligibleThroughRound: league.keeper_ineligible_through_round ?? 4,
-    keeperCostRule: league.keeper_cost_rule || 'round_minus_1',
-    draftBoardOrder: league.draft_board_order ? JSON.parse(league.draft_board_order) : null,
-  }));
+  localStorage.setItem('cached_recovery_session', '1');
+  return getCachedLeagues();
 };
 
 export interface DraftablePlayerOption {

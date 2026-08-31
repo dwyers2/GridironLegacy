@@ -197,6 +197,19 @@ const App: React.FC = () => {
         return;
       }
 
+      // Restore a cached recovery session after a browser refresh. The
+      // HttpOnly cookie is not readable by JavaScript, so the endpoint is
+      // checked directly; a 401 simply means this is a normal login visit.
+      try {
+        const cachedLeagues = await yahooService.getCachedLeagues();
+        if (cachedLeagues.length > 0) {
+          setLeagues(cachedLeagues);
+          setCurrentStep(AppState.LEAGUE_SELECT);
+        }
+      } catch {
+        // No active recovery cookie/session; remain on the login page.
+      }
+
     };
 
     handleOAuthCallback();
@@ -605,7 +618,7 @@ const App: React.FC = () => {
     switch (currentStep) {
       case AppState.LOGIN:
         return (
-          <div style={{ position: 'relative', minHeight: '100vh', display: 'flex', flexDirection: 'column', overflow: 'hidden', background: 'var(--obsidian)' }}>
+          <div style={{ position: 'relative', display: 'flex', flexDirection: 'column', overflow: 'hidden', background: 'var(--obsidian)' }}>
 
             {/* ── Atmospheric background layers ── */}
             <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}>
@@ -643,8 +656,7 @@ const App: React.FC = () => {
               position: 'relative', zIndex: 10,
               display: 'flex', flexDirection: 'column', alignItems: 'center',
               justifyContent: 'center', textAlign: 'center',
-              padding: '6rem 1.5rem 4rem',
-              minHeight: '82vh',
+              padding: '6rem 1.5rem 0',
             }}>
 
 
@@ -680,17 +692,6 @@ const App: React.FC = () => {
                 <div style={{ flex: 1, height: '1px', background: 'linear-gradient(to left, transparent, rgba(212,160,23,0.35))' }} />
               </div>
 
-              {/* Tagline */}
-              <p className="animate-fade-up-3" style={{
-                fontFamily: "'Outfit', sans-serif",
-                fontWeight: 400, fontSize: '1rem',
-                color: 'var(--text-secondary)',
-                maxWidth: '380px', lineHeight: 1.75,
-                letterSpacing: '0.015em', marginBottom: '2.5rem',
-              }}>
-                Uncover the hidden patterns of your league's history. Multi-season analytics, AI manager profiles, and the complete record of your dynasty.
-              </p>
-
               {/* Error state */}
               {error && (
                 <div style={{
@@ -703,6 +704,17 @@ const App: React.FC = () => {
                   <p style={{ margin: 0 }}>{error}</p>
                 </div>
               )}
+
+              {/* Tagline */}
+              <p className="animate-fade-up-3" style={{
+                fontFamily: "'Outfit', sans-serif",
+                fontWeight: 400, fontSize: '1rem',
+                color: 'var(--text-secondary)',
+                maxWidth: '380px', lineHeight: 1.75,
+                letterSpacing: '0.015em', marginBottom: '2.5rem',
+              }}>
+                Multi-season analytics, AI manager profiles, and the complete record of your dynasty.
+              </p>
 
               {/* CTA */}
               <button
@@ -755,85 +767,8 @@ const App: React.FC = () => {
                 </p>
               </div>
 
-              <p className="animate-fade-up-4" style={{
-                marginTop: '1.25rem', fontSize: '0.7rem',
-                color: 'var(--text-muted)', letterSpacing: '0.07em',
-                fontFamily: "'Outfit', sans-serif",
-              }}>
-                SECURE OAUTH 2.0 &nbsp;·&nbsp; READ-ONLY &nbsp;·&nbsp; NO USER DATA STORED
-              </p>
             </div>
 
-            {/* ── Feature trinity ── */}
-            <div
-              className="animate-fade-up-5"
-              style={{
-                position: 'relative', zIndex: 10,
-                maxWidth: '860px', width: '100%', margin: '0 auto',
-                padding: '0 1.5rem 6rem',
-              }}
-            >
-              <div style={{
-                display: 'grid',
-                gridTemplateColumns: 'repeat(auto-fit, minmax(min(230px, 100%), 1fr))',
-                border: '1px solid var(--border)',
-                borderRadius: '6px', overflow: 'hidden',
-                gap: '1px', background: 'var(--border)',
-              }}>
-                {[
-                  {
-                    icon: <Trophy size={26} style={{ color: 'var(--gold)' }} />,
-                    label: 'LEAGUE LEGACY',
-                    desc: 'Every season, every draft, every championship. Your complete franchise history in one place.',
-                  },
-                  {
-                    icon: <Sparkles size={26} style={{ color: 'var(--gold)' }} />,
-                    label: 'AI SCOUTING',
-                    desc: 'Gemini-powered manager profiles that expose tendencies, blind spots, and competitive archetypes.',
-                  },
-                  {
-                    icon: <TrendingUp size={26} style={{ color: 'var(--gold)' }} />,
-                    label: 'PATTERN INTEL',
-                    desc: 'Multi-season ownership maps reveal who hoards RBs, who chases upside, and who never adapts.',
-                  },
-                ].map(({ icon, label, desc }) => (
-                  <div
-                    key={label}
-                    className="feature-card"
-                    style={{
-                      padding: '2rem 1.75rem',
-                      background: 'var(--surface)',
-                      display: 'flex', flexDirection: 'column', gap: '1rem',
-                      transition: 'background 0.2s',
-                    }}
-                  >
-                    <div style={{
-                      width: '50px', height: '50px',
-                      background: 'var(--gold-dim)',
-                      border: '1px solid rgba(212,160,23,0.18)',
-                      borderRadius: '6px',
-                      display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    }}>
-                      {icon}
-                    </div>
-                    <div style={{
-                      fontFamily: "'Barlow Condensed', sans-serif",
-                      fontWeight: 700, fontSize: '0.75rem',
-                      letterSpacing: '0.2em', color: 'var(--gold)',
-                    }}>
-                      {label}
-                    </div>
-                    <p style={{
-                      fontFamily: "'Outfit', sans-serif",
-                      fontSize: '0.875rem', color: 'var(--text-secondary)',
-                      lineHeight: 1.65, fontWeight: 400, margin: 0,
-                    }}>
-                      {desc}
-                    </p>
-                  </div>
-                ))}
-              </div>
-            </div>
           </div>
         );
 
@@ -2022,14 +1957,29 @@ const App: React.FC = () => {
         {renderContent()}
       </main>
 
-      <footer style={{ borderTop: '1px solid var(--border)', padding: '3rem 0', background: 'var(--surface)', marginTop: '5rem' }}>
+      <footer style={{ borderTop: '1px solid var(--border)', padding: currentStep === AppState.LOGIN ? '1.25rem 0 2rem' : '3rem 0', background: 'var(--surface)', marginTop: currentStep === AppState.LOGIN ? 0 : '5rem' }}>
         <div className="max-w-7xl mx-auto px-6" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '1.25rem' }}>
           <div style={{
-            fontFamily: "'Barlow Condensed', sans-serif",
-            fontSize: '0.7rem', letterSpacing: '0.2em',
-            color: 'var(--text-muted)', textAlign: 'center', textTransform: 'uppercase',
+            display: 'inline-flex', alignItems: 'center', gap: '0.55rem',
+            color: 'var(--text-muted)', opacity: 0.85,
+            fontFamily: "'Outfit', sans-serif", fontSize: '0.72rem',
+            letterSpacing: '0.015em',
           }}>
-            © 2025 Dynasty Alchemy &nbsp;·&nbsp; Built with Secure Proxy Architecture
+            <span aria-label="Yahoo Fantasy" style={{
+              position: 'relative', display: 'block', flexShrink: 0,
+              width: '58px', height: '20px', overflow: 'hidden',
+              background: '#fff', borderRadius: '3px',
+            }}>
+              <img
+                src="https://763445962456-brand-assets.s3.us-west-2.amazonaws.com/brandwebsite/s3fs-public/Yahoo_Fantasy.svg"
+                alt="Yahoo Fantasy"
+                style={{
+                  position: 'absolute', width: '101px', height: '101px',
+                  left: '-21px', top: '-40px', maxWidth: 'none',
+                }}
+              />
+            </span>
+            <span>Fantasy data provided by Yahoo Fantasy</span>
           </div>
           <div style={{ display: 'flex', gap: '2.5rem' }}>
             {[
