@@ -79,7 +79,7 @@ const App: React.FC = () => {
   const [historicalRostersLoading, setHistoricalRostersLoading] = useState(false);
   const [rosterKeeperSummary, setRosterKeeperSummary] = useState<KeeperSummary | null>(null);
   const [rosterKeeperLoading, setRosterKeeperLoading] = useState(false);
-  const [currentRankings, setCurrentRankings] = useState<Map<string, { overallRank: number; positionRank: number; value: number }>>(new Map());
+  const [currentRankings, setCurrentRankings] = useState<Map<string, { playerName: string; position: string; overallRank: number; positionRank: number; value: number }>>(new Map());
   const [currentUserGuid, setCurrentUserGuid] = useState<string | null>(null);
   const [leagueSwitcherOpen, setLeagueSwitcherOpen] = useState(false);
   const [editingLeagueName, setEditingLeagueName] = useState(false);
@@ -417,6 +417,15 @@ const App: React.FC = () => {
       .finally(() => { if (!cancelled) setHistoricalRostersLoading(false); });
     return () => { cancelled = true; };
   }, [rosterViewSeason, selectedLeague?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (dashboardTab !== 'new-draft' || !selectedLeague) return;
+    let cancelled = false;
+    yahooService.fetchCurrentRankings(true)
+      .then(rankings => { if (!cancelled) setCurrentRankings(rankings); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [dashboardTab, selectedLeague?.id]);
 
   useEffect(() => {
     if (!selectedLeague || selectedLeague.isKeeperLeague === false) return;
@@ -1447,6 +1456,8 @@ const App: React.FC = () => {
                   keeperManagers={keeperSummary?.managers ?? []}
                   seasonPicks={newDraftBoard.season?.picks ?? []}
                   rosterPositions={newDraftBoard.season?.rosterPositions}
+                  rankings={currentRankings}
+                  onRefreshRankings={async () => setCurrentRankings(await yahooService.fetchCurrentRankings(true))}
                 />
               </div>
             )}

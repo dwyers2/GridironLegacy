@@ -907,7 +907,8 @@ app.get('/api/fantasycalc/rankings', async (req, res) => {
     const RANKING_PROFILE = 'redraft-half-ppr-1qb-12-team';
     const FANTASYCALC_URL = 'https://api.fantasycalc.com/values/current?isDynasty=false&numQbs=1&numTeams=12&ppr=0.5';
     const cacheAge = db.getFantasyCalcCacheAge();
-    const isFresh = db.getFantasyCalcCacheProfile() === RANKING_PROFILE
+    const forceRefresh = req.query.refresh === '1' || req.query.refresh === 'true';
+    const isFresh = !forceRefresh && db.getFantasyCalcCacheProfile() === RANKING_PROFILE
       && cacheAge !== null && (Date.now() - cacheAge.getTime()) < 24 * 60 * 60 * 1000;
 
     if (isFresh) {

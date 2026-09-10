@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { AlertTriangle, Loader2, RotateCcw, Star, Trash2, Users } from 'lucide-react';
+import { AlertTriangle, Loader2, RefreshCw, RotateCcw, Star, Trash2, Users } from 'lucide-react';
 import { useIsMobile } from '../hooks/useIsMobile';
 import { DraftablePlayerOption, searchDraftablePlayers } from '../services/yahooService';
 import { DraftPick, ManagerKeepers, RosterPosition } from '../types';
@@ -22,6 +22,8 @@ interface Props {
    *  Used to derive which pick slots were acquired via trade. */
   seasonPicks?: DraftPick[];
   rosterPositions?: RosterPosition[];
+  rankings?: Map<string, { playerName: string; position: string; overallRank: number; positionRank: number; value: number }>;
+  onRefreshRankings?: () => Promise<void>;
 }
 
 interface FutureDraftPickTrade {
@@ -79,6 +81,7 @@ function normalizeStoredBoard(raw: unknown): BoardState {
 
 export default function NewDraftBoard({
   leagueId, leagueName, teams, rounds, seasonLabel, keeperManagers = [], seasonPicks = [], rosterPositions,
+  rankings = new Map(), onRefreshRankings,
 }: Props) {
   const isMobile = useIsMobile(900);
   const storageKey = `new-draft-board:${leagueId}`;
@@ -92,6 +95,7 @@ export default function NewDraftBoard({
   const [viewMode, setViewMode] = useState<'round' | 'position'>('round');
   const [futureTrades, setFutureTrades] = useState<FutureDraftPickTrade[]>([]);
   const [sharedBoardLoaded, setSharedBoardLoaded] = useState(false);
+  const [refreshingRankings, setRefreshingRankings] = useState(false);
   const lastSharedUpdateRef = useRef<string | null>(null);
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const saveInFlightRef = useRef(false);
@@ -269,6 +273,28 @@ export default function NewDraftBoard({
     }
     return new Set([...counts.entries()].filter(([, count]) => count > 1).map(([name]) => name));
   }, [displayedBoard]);
+  const draftedPlayerNames = useMemo(() => new Set(
+    Object.values(displayedBoard)
+      .map(value => value.playerName.trim().toLowerCase())
+      .filter(Boolean),
+  ), [displayedBoard]);
+  const topAvailableByPosition = useMemo(() => {
+    const grouped: Record<string, Array<{ name: string; overallRank: number; positionRank: number }>> = { QB: [], WR: [], RB: [], TE: [] };
+    for (const [name, ranking] of rankings.entries()) {
+      const position = ranking.position?.toUpperCase();
+      if (!position || !grouped[position] || draftedPlayerNames.has(name.toLowerCase())) continue;
+      grouped[position].push({
+        name: ranking.playerName || name,
+        overallRank: ranking.overallRank,
+        positionRank: ranking.positionRank,
+      });
+    }
+    for (const position of Object.keys(grouped)) {
+      grouped[position].sort((a, b) => a.positionRank - b.positionRank || a.overallRank - b.overallRank);
+      grouped[position] = grouped[position].slice(0, 5);
+    }
+    return grouped;
+  }, [draftedPlayerNames, rankings]);
   const activeValue = activeCell ? (displayedBoard[activeCell]?.playerName ?? '') : '';
 
   const positionPicks = useMemo(() =>
@@ -772,6 +798,25 @@ export default function NewDraftBoard({
         )}
       </div>
       <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+        {onRefreshRankings && (
+          <button
+            onClick={async () => {
+              setRefreshingRankings(true);
+              try { await onRefreshRankings(); } finally { setRefreshingRankings(false); }
+            }}
+            disabled={refreshingRankings}
+            title="Refresh current half-PPR rankings"
+            style={{
+              display: 'inline-flex', alignItems: 'center', gap: '0.3rem', padding: '0.38rem 0.6rem',
+              borderRadius: '5px', border: '1px solid var(--border-muted)', background: 'var(--surface-2)',
+              color: 'var(--text-muted)', fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700,
+              fontSize: '0.64rem', letterSpacing: '0.08em', textTransform: 'uppercase', cursor: refreshingRankings ? 'wait' : 'pointer',
+            }}
+          >
+            <RefreshCw size={11} style={refreshingRankings ? { animation: 'spin 1s linear infinite' } : undefined} />
+            Refresh Rankings
+          </button>
+        )}
         {/* View toggle */}
         <div style={{ display: 'flex', background: 'var(--surface-2)', border: '1px solid var(--border)', borderRadius: '6px', padding: '0.15rem' }}>
           {(['round', 'position'] as const).map(mode => (
@@ -815,11 +860,39 @@ export default function NewDraftBoard({
     </div>
   );
 
+  const rankingsStrip = (
+    <section style={{
+      marginBottom: '0.85rem', padding: '0.7rem', border: '1px solid var(--border)', borderRadius: '8px',
+      background: 'var(--surface)',
+    }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: '0.75rem', marginBottom: '0.55rem' }}>
+        <span style={{ fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: '0.68rem', letterSpacing: '0.14em', textTransform: 'uppercase', color: 'var(--text-secondary)' }}>
+          Top available by position
+        </span>
+        <span style={{ fontSize: '0.62rem', color: 'var(--text-muted)' }}>Current half-PPR rankings</span>
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: '0.5rem' }}>
+        {(['QB', 'WR', 'RB', 'TE'] as const).map(position => (
+          <div key={position} style={{ minWidth: 0, padding: '0.45rem 0.55rem', background: POS_COLORS[position].bg, border: `1px solid ${POS_COLORS[position].border}`, borderRadius: '6px' }}>
+            <div style={{ color: POS_COLORS[position].dark, fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, fontSize: '0.72rem', letterSpacing: '0.12em', marginBottom: '0.3rem' }}>{position}</div>
+            {topAvailableByPosition[position].length > 0 ? topAvailableByPosition[position].map(player => (
+              <div key={player.name} style={{ display: 'flex', justifyContent: 'space-between', gap: '0.35rem', fontSize: '0.68rem', lineHeight: 1.45, color: 'var(--text-secondary)' }}>
+                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{player.name}</span>
+                <span style={{ flexShrink: 0, color: 'var(--text-muted)' }}>#{player.positionRank}</span>
+              </div>
+            )) : <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)' }}>No rankings loaded</div>}
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+
   // ── Position view (both mobile and desktop) ───────────────────────────────
   if (viewMode === 'position') {
     return (
       <div>
         {toolbar}
+        {rankingsStrip}
         <DraftByPositionView teams={teams} picks={positionPicks} rosterPositions={rosterPositions} />
       </div>
     );
@@ -830,6 +903,7 @@ export default function NewDraftBoard({
     return (
       <div>
         {toolbar}
+        {rankingsStrip}
         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.65rem' }}>
           {Array.from({ length: rounds }, (_, i) => i + 1).map(round => (
             <section key={round} style={{
@@ -890,6 +964,7 @@ export default function NewDraftBoard({
   return (
     <div>
       {toolbar}
+      {rankingsStrip}
       <div ref={topScrollRef} style={{ overflowX: 'auto', overflowY: 'hidden', height: '18px', marginBottom: '3px' }} aria-label="Scroll draft board horizontally">
         <div style={{ height: '1px' }} />
       </div>
