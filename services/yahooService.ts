@@ -2200,14 +2200,16 @@ export const refreshCurrentRosters = async (leagueKey: string, season?: string):
   return fetchCurrentRosters(leagueKey, season);
 };
 
-export const fetchCurrentRankings = async (): Promise<Map<string, { overallRank: number; positionRank: number; value: number }>> => {
+export const fetchCurrentRankings = async (forceRefresh = false): Promise<Map<string, { playerName: string; position: string; overallRank: number; positionRank: number; value: number }>> => {
   try {
-    const res = await fetch(`${BACKEND_URL}/fantasycalc/rankings`);
+    const res = await fetch(`${BACKEND_URL}/fantasycalc/rankings${forceRefresh ? '?refresh=1' : ''}`);
     if (!res.ok) return new Map();
     const data = await res.json();
-    const map = new Map<string, { overallRank: number; positionRank: number; value: number }>();
+    const map = new Map<string, { playerName: string; position: string; overallRank: number; positionRank: number; value: number }>();
     for (const p of data.players ?? []) {
       map.set((p.player_name as string).toLowerCase(), {
+        playerName: p.player_name,
+        position: p.position,
         overallRank: p.overall_rank,
         positionRank: p.position_rank,
         value: p.value,
